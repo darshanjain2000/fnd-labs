@@ -4,8 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.api.deps import reset_cached_singletons
-from app.config import get_settings, reload_settings
+from api.deps import reset_cached_singletons
+from config import get_settings, reload_settings
 
 router = APIRouter(prefix="/config", tags=["config"])
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config import get_settings
-from app.core.logging import get_logger
-from app.services.broker.base import Broker, OrderRequest, OrderResult
+from config import get_settings
+from core.logging import get_logger
+from services.broker.base import Broker, OrderRequest, OrderResult
 
 log = get_logger(__name__)
 

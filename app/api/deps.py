@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from app.agents.signal_agent import SignalAgent
-from app.agents.validation_agent import ValidationAgent
-from app.config import Settings, get_settings
-from app.core.logging import get_logger
-from app.engine.orchestrator import Orchestrator
-from app.engine.risk_engine import RiskEngine
-from app.rag.store import RAGStore
-from app.services.broker.base import Broker
-from app.services.broker.paper_broker import PaperBroker
-from app.strategies import ALL_STRATEGIES
+from agents.signal_agent import SignalAgent
+from agents.validation_agent import ValidationAgent
+from config import Settings, get_settings
+from core.logging import get_logger
+from engine.orchestrator import Orchestrator
+from engine.risk_engine import RiskEngine
+from rag.store import RAGStore
+from services.broker.base import Broker
+from services.broker.paper_broker import PaperBroker
+from strategies import ALL_STRATEGIES
 
 log = get_logger(__name__)
 
@@ -34,11 +34,11 @@ def _build_broker(s: Settings) -> Broker:
         log.info("broker_init", broker="paper", forced_by_flag=s.paper_trade)
         return PaperBroker(quote_fn=_mock_quote_fn)
     if s.broker == "kite":
-        from app.services.broker.kite_client import KiteBroker
+        from services.broker.kite_client import KiteBroker
         log.info("broker_init", broker="kite")
         return KiteBroker()
     if s.broker == "angel":
-        from app.services.broker.angel_client import AngelBroker
+        from services.broker.angel_client import AngelBroker
         log.info("broker_init", broker="angel")
         return AngelBroker()
     log.warning("broker_unknown_fallback_paper", broker=s.broker)

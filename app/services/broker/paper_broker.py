@@ -5,8 +5,8 @@ import random
 import uuid
 from collections.abc import Callable
 
-from app.core.logging import get_logger
-from app.services.broker.base import Broker, OrderRequest, OrderResult
+from core.logging import get_logger
+from services.broker.base import Broker, OrderRequest, OrderResult
 
 log = get_logger(__name__)
 

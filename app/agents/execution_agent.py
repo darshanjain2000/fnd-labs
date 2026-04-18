@@ -6,11 +6,11 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.core.logging import get_logger
-from app.db import SessionLocal
-from app.models.trade import AuditLog, Trade
-from app.services.broker.base import Broker, OrderRequest, OrderResult
-from app.strategies.base import Signal
+from core.logging import get_logger
+from db import SessionLocal
+from models.trade import AuditLog, Trade
+from services.broker.base import Broker, OrderRequest, OrderResult
+from strategies.base import Signal
 
 log = get_logger(__name__)
 

@@ -16,8 +16,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from app.core.logging import get_logger
-from app.services.broker.base import Broker, OrderRequest, OrderResult
+from core.logging import get_logger
+from services.broker.base import Broker, OrderRequest, OrderResult
 
 log = get_logger(__name__)
 

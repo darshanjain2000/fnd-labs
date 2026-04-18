@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_risk_engine
-from app.engine.risk_engine import RiskEngine
+from api.deps import get_risk_engine
+from engine.risk_engine import RiskEngine
 
 router = APIRouter(tags=["admin"])
 

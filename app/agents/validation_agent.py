@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.config import get_settings
-from app.core.logging import get_logger
-from app.services.llm_client import LLMClient, SpendCapExceeded
-from app.strategies.base import Signal
+from config import get_settings
+from core.logging import get_logger
+from services.llm_client import LLMClient, SpendCapExceeded
+from strategies.base import Signal
 
 log = get_logger(__name__)
 

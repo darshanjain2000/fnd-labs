@@ -16,10 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from app.config import Settings, get_settings
-from app.core.logging import get_logger
-from app.core.market_calendar import minutes_to_close, now_ist
-from app.strategies.base import Signal
+from config import Settings, get_settings
+from core.logging import get_logger
+from core.market_calendar import minutes_to_close, now_ist
+from strategies.base import Signal
 
 log = get_logger(__name__)
 

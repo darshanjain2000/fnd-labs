@@ -6,12 +6,12 @@ from pydantic import BaseModel
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_broker, get_risk_engine
-from app.agents.execution_agent import ExecutionAgent
-from app.db import get_session
-from app.engine.risk_engine import RiskEngine
-from app.models.trade import AuditLog, Signal, Trade
-from app.services.broker.base import Broker
+from api.deps import get_broker, get_risk_engine
+from agents.execution_agent import ExecutionAgent
+from db import get_session
+from engine.risk_engine import RiskEngine
+from models.trade import AuditLog, Signal, Trade
+from services.broker.base import Broker
 
 router = APIRouter(prefix="/trades", tags=["trades"])
 
