@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from strategies.base import Signal, Strategy
+from app.strategies.base import Signal, Strategy
 
 
 class EMABreakout(Strategy):

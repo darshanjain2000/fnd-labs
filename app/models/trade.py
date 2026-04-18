@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from models.base import Base
+from app.models.base import Base
 
 
 class Signal(Base):
@@ -30,6 +30,7 @@ class Trade(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
+    strategy: Mapped[str | None] = mapped_column(String(32), index=True, default=None)
     side: Mapped[str] = mapped_column(String(8))
     qty: Mapped[int] = mapped_column(Integer)
     entry_price: Mapped[float] = mapped_column(Float)
@@ -40,6 +41,7 @@ class Trade(Base):
     mode: Mapped[str] = mapped_column(String(8))  # paper / live
     status: Mapped[str] = mapped_column(String(16), default="OPEN")  # OPEN/CLOSED/CANCELLED
     broker_order_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    entry_context: Mapped[dict] = mapped_column(JSON, default=dict)  # indicators at entry
 
     signal: Mapped["Signal | None"] = relationship(back_populates="trade")
 

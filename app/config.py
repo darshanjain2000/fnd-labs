@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     ai_fallback_approve_threshold: float = 0.6
     """When LLM unavailable, approve if strategy confidence >= this value."""
 
+    # ---- Memory / context for the LLM -------------------------------
+    memory_source: Literal["db", "rag", "off"] = "db"
+    """How to fetch similar past-trade context for the validation agent.
+
+    - "db"  : SQL query over the trades table (fast, deterministic, default)
+    - "rag" : Chroma vector search (requires rag_enabled=true, heavier)
+    - "off" : skip similar-trade context entirely
+    """
+    memory_k: int = 5
+
     # ---- RAG ---------------------------------------------------------
     rag_enabled: bool = False
     chroma_path: str = "./.chroma"
@@ -49,6 +59,7 @@ class Settings(BaseSettings):
 
     # ---- Broker: Angel One ------------------------------------------
     angel_api_key: str = ""
+    angel_api_secret: str = ""
     angel_client_code: str = ""
     angel_pin: str = ""
     angel_totp_secret: str = ""

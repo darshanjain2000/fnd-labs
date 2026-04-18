@@ -6,11 +6,11 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from core.logging import get_logger
-from db import SessionLocal
-from models.trade import AuditLog, Trade
-from services.broker.base import Broker, OrderRequest, OrderResult
-from strategies.base import Signal
+from app.core.logging import get_logger
+from app.db import SessionLocal
+from app.models.trade import AuditLog, Trade
+from app.services.broker.base import Broker, OrderRequest, OrderResult
+from app.strategies.base import Signal
 
 log = get_logger(__name__)
 
@@ -51,6 +51,7 @@ class ExecutionAgent:
                 signal_id=signal_row_id,
                 opened_at=datetime.utcnow(),
                 symbol=signal.symbol,
+                strategy=signal.strategy,
                 side=signal.side,
                 qty=qty,
                 entry_price=entry.avg_price or signal.entry,
@@ -59,6 +60,7 @@ class ExecutionAgent:
                 mode=self.broker.mode,
                 status="OPEN",
                 broker_order_id=entry.order_id,
+                entry_context=signal.context or {},
             )
             session.add(trade)
             session.add(

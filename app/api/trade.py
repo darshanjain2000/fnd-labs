@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from api.deps import get_broker, set_mock_quote
-from services.broker.base import Broker, OrderRequest
+from app.api.deps import get_broker, set_mock_quote
+from app.services.broker.base import Broker, OrderRequest
 
 router = APIRouter(prefix="/trade", tags=["trade"])
 

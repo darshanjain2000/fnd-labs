@@ -17,7 +17,7 @@ def test_health():
 
 
 def test_positions_endpoint():
-    r = client.get("/positions")
+    r = client.get("/admin/positions")
     assert r.status_code == 200
     assert "open_positions" in r.json()
 

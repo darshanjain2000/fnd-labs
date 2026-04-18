@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.logging import get_logger
-from strategies import ALL_STRATEGIES, Signal
-from strategies.base import Strategy
+from app.core.logging import get_logger
+from app.strategies import ALL_STRATEGIES, Signal
+from app.strategies.base import Strategy
 
 log = get_logger(__name__)
 

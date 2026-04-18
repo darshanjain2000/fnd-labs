@@ -4,8 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.deps import reset_cached_singletons
-from config import get_settings, reload_settings
+from app.api.deps import reset_cached_singletons
+from app.config import get_settings, reload_settings
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -15,6 +15,7 @@ _EDITABLE_FIELDS = {
     "enabled_strategies", "default_lot_size",
     "openrouter_enabled", "openrouter_model", "agent_preset",
     "ai_fallback_approve_threshold", "openrouter_daily_usd_cap",
+    "memory_source", "memory_k",
     "rag_enabled",
     "capital_inr", "max_risk_per_trade_pct", "max_daily_loss_pct",
     "max_open_positions", "max_trades_per_day",
@@ -36,6 +37,8 @@ class ConfigPatch(BaseModel):
     agent_preset: str | None = None
     ai_fallback_approve_threshold: float | None = None
     openrouter_daily_usd_cap: float | None = None
+    memory_source: str | None = None
+    memory_k: int | None = None
     rag_enabled: bool | None = None
     capital_inr: float | None = None
     max_risk_per_trade_pct: float | None = None
@@ -50,7 +53,7 @@ def _safe_view() -> dict:
     s = get_settings()
     data = s.model_dump()
     # Mask secrets.
-    for k in ("openrouter_api_key", "kite_api_secret", "kite_access_token", "angel_pin", "angel_totp_secret"):
+    for k in ("openrouter_api_key", "kite_api_secret", "kite_access_token", "angel_api_secret", "angel_pin", "angel_totp_secret"):
         if data.get(k):
             data[k] = "***set***"
     data["is_live_effective"] = s.is_live()

@@ -8,17 +8,19 @@ from typing import Any
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from agents.execution_agent import ExecutionAgent
-from agents.signal_agent import SignalAgent
-from agents.validation_agent import ValidationAgent
-from core.logging import get_logger
-from db import SessionLocal
-from engine.risk_engine import RiskEngine
-from models.trade import Signal as SignalRow
-from models.trade import Trade as TradeRow
-from rag.store import RAGStore
-from services.broker.base import Broker
-from strategies.base import Signal
+from app.agents.execution_agent import ExecutionAgent
+from app.agents.signal_agent import SignalAgent
+from app.agents.validation_agent import ValidationAgent
+from app.config import get_settings
+from app.core.logging import get_logger
+from app.db import SessionLocal
+from app.engine.risk_engine import RiskEngine
+from app.memory.trade_memory import TradeMemory
+from app.models.trade import Signal as SignalRow
+from app.models.trade import Trade as TradeRow
+from app.rag.store import RAGStore
+from app.services.broker.base import Broker
+from app.strategies.base import Signal
 
 log = get_logger(__name__)
 
@@ -46,6 +48,7 @@ class Orchestrator:
         signal_agent: SignalAgent | None = None,
         validation_agent: ValidationAgent | None = None,
         rag: RAGStore | None = None,
+        memory: TradeMemory | None = None,
         lot_size: int = 1,
         session_factory: Callable[[], Session] = SessionLocal,
     ) -> None:
@@ -55,6 +58,7 @@ class Orchestrator:
         self.validation_agent = validation_agent or ValidationAgent()
         self.execution_agent = ExecutionAgent(broker, session_factory=session_factory)
         self.rag = rag or RAGStore()
+        self.memory = memory or TradeMemory(session_factory=session_factory)
         self.lot_size = lot_size
         self._session_factory = session_factory
 
@@ -80,9 +84,17 @@ class Orchestrator:
             return row.id
 
     def _process_one(self, sig: Signal, is_expiry_day: bool) -> PipelineOutcome:
-        context_docs = self.rag.query_similar(
-            f"{sig.symbol} {sig.strategy} {sig.side} ctx={sig.context}", k=3
-        )
+        s = get_settings()
+        if s.memory_source == "db":
+            context_docs = self.memory.format_context(
+                sig.symbol, sig.strategy, sig.side, k=s.memory_k
+            )
+        elif s.memory_source == "rag":
+            context_docs = self.rag.query_similar(
+                f"{sig.symbol} {sig.strategy} {sig.side} ctx={sig.context}", k=s.memory_k
+            )
+        else:
+            context_docs = []
         validation = self.validation_agent.validate(sig, context_docs)
 
         sig_dict = {

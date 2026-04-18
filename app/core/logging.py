@@ -3,7 +3,7 @@ import sys
 
 import structlog
 
-from config import get_settings
+from app.config import get_settings
 
 
 def configure_logging() -> None:

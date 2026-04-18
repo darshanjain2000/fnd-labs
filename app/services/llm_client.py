@@ -7,8 +7,8 @@ from typing import Any
 
 import httpx
 
-from config import get_settings
-from core.logging import get_logger
+from app.config import get_settings
+from app.core.logging import get_logger
 
 log = get_logger(__name__)
 

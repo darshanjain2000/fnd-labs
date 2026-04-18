@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.deps import get_orchestrator, set_mock_quote
-from engine.orchestrator import Orchestrator
-from services.market_data import compute_indicators
+from app.api.deps import get_orchestrator, set_mock_quote
+from app.engine.orchestrator import Orchestrator
+from app.services.market_data import compute_indicators
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
 
