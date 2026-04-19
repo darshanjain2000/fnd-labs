@@ -14,11 +14,13 @@ from fastapi import FastAPI
 from app.api.admin import router as admin_router
 from app.api.analyze import router as analyze_router
 from app.api.config_router import router as config_router
+from app.api.runner import report_router, router as runner_router
 from app.api.trade import router as trade_router
 from app.api.trades import audit_router, router as trades_router, signals_router
 from app.config import get_settings
 from app.core.logging import configure_logging
 from app.db import init_db
+from app.services.scheduler import get_scheduler
 
 configure_logging()
 
@@ -26,7 +28,13 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    s = get_settings()
+    if s.auto_run_enabled:
+        get_scheduler().start()
     yield
+    sched = get_scheduler()
+    if sched.status.running:
+        await sched.stop()
 
 
 app = FastAPI(title="trading-poc", version="0.1.0", lifespan=lifespan)
@@ -38,6 +46,8 @@ app.include_router(signals_router)
 app.include_router(audit_router)
 app.include_router(admin_router)
 app.include_router(config_router)
+app.include_router(runner_router)
+app.include_router(report_router)
 
 
 @app.get("/")

@@ -115,3 +115,99 @@ class ExecutionAgent:
             session.refresh(trade)
             log.info("trade_closed", trade_id=trade_id, pnl=trade.pnl)
             return trade
+
+    # ---------------------------------------------------------------------
+    # Mark-to-market: auto-close open trades whose SL or target was hit.
+    # Called on every scheduler tick with the latest price per symbol.
+    # ---------------------------------------------------------------------
+    def mark_to_market(self, latest_prices: dict[str, float], reason_tag: str = "mtm") -> list[Trade]:
+        """For each OPEN trade in DB, close it if last price breached SL or target.
+
+        Args:
+            latest_prices: { symbol: last_close } dict from scheduler/Angel fetch
+            reason_tag: included in the AuditLog payload for traceability
+
+        Returns list of trades that were just closed.
+        """
+        closed: list[Trade] = []
+        with self._session_factory() as session:
+            open_trades = session.query(Trade).filter(Trade.status == "OPEN").all()
+            for t in open_trades:
+                last = latest_prices.get(t.symbol)
+                if last is None:
+                    continue
+
+                reason: str | None = None
+                if t.side == "BUY":
+                    if last <= t.stop_loss:
+                        reason = "stop_loss_hit"
+                    elif t.target and last >= t.target:
+                        reason = "target_hit"
+                else:  # SELL
+                    if last >= t.stop_loss:
+                        reason = "stop_loss_hit"
+                    elif t.target and last <= t.target:
+                        reason = "target_hit"
+                if reason is None:
+                    continue
+
+                sign = 1 if t.side == "BUY" else -1
+                t.exit_price = last
+                t.pnl = round(sign * (last - t.entry_price) * t.qty, 2)
+                t.status = "CLOSED"
+                t.closed_at = datetime.utcnow()
+                session.add(
+                    AuditLog(
+                        event="trade_auto_closed",
+                        payload={
+                            "trade_id": t.id,
+                            "symbol": t.symbol,
+                            "side": t.side,
+                            "exit_price": last,
+                            "pnl": t.pnl,
+                            "reason": reason,
+                            "tag": reason_tag,
+                        },
+                    )
+                )
+                # Cancel SL leg on broker (best-effort; ignore failures)
+                try:
+                    if t.broker_order_id:
+                        self.broker.cancel_order(t.broker_order_id + "-SL")
+                except Exception:  # pragma: no cover
+                    pass
+                closed.append(t)
+                log.info(
+                    "trade_auto_closed",
+                    trade_id=t.id, symbol=t.symbol, side=t.side,
+                    exit_price=last, pnl=t.pnl, reason=reason,
+                )
+            if closed:
+                session.commit()
+                for t in closed:
+                    session.refresh(t)
+        return closed
+
+    def force_close_all(self, latest_prices: dict[str, float], reason: str = "square_off") -> list[Trade]:
+        """Close every OPEN trade at provided last price (EOD square-off)."""
+        closed: list[Trade] = []
+        with self._session_factory() as session:
+            open_trades = session.query(Trade).filter(Trade.status == "OPEN").all()
+            for t in open_trades:
+                last = latest_prices.get(t.symbol, t.entry_price)
+                sign = 1 if t.side == "BUY" else -1
+                t.exit_price = last
+                t.pnl = round(sign * (last - t.entry_price) * t.qty, 2)
+                t.status = "CLOSED"
+                t.closed_at = datetime.utcnow()
+                session.add(
+                    AuditLog(
+                        event="trade_force_closed",
+                        payload={"trade_id": t.id, "exit_price": last, "pnl": t.pnl, "reason": reason},
+                    )
+                )
+                closed.append(t)
+                log.info("trade_force_closed", trade_id=t.id, pnl=t.pnl, reason=reason)
+            if closed:
+                session.commit()
+        return closed

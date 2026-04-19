@@ -75,13 +75,45 @@ class Settings(BaseSettings):
     kill_switch: bool = False
     block_expiry_last_hours: int = 2
 
+    # ---- Intraday runner (live-data paper trading loop) --------------
+    auto_run_enabled: bool = False
+    """If true, the scheduler starts automatically at app boot and runs during market hours."""
+    watchlist: str = "NIFTY:NSE,BANKNIFTY:NSE"
+    """Comma-separated SYMBOL:EXCHANGE pairs the runner polls each tick."""
+    run_interval_sec: int = 60
+    """How often (seconds) to fetch a fresh candle batch per symbol during market hours."""
+    run_candle_interval: str = "5m"
+    """Candle interval fed to strategies (1m, 3m, 5m, 15m, 30m, 1h)."""
+    market_open: str = "09:15"
+    """Market open time (IST, 24h HH:MM)."""
+    market_close: str = "15:30"
+    """Market close time (IST, 24h HH:MM)."""
+    square_off_time: str = "15:20"
+    """Force-close all open paper trades at this IST time (before market close)."""
+
     # ---- Storage / logging ------------------------------------------
     database_url: str = "sqlite:///./trading.db"
     log_level: str = "INFO"
+    log_format: Literal["pretty", "json"] = "pretty"
+    """'pretty' = human-readable colored console, 'json' = structured logs for prod."""
 
     # ---- Helpers -----------------------------------------------------
     def strategy_list(self) -> list[str]:
         return [s.strip() for s in self.enabled_strategies.split(",") if s.strip()]
+
+    def watchlist_pairs(self) -> list[tuple[str, str]]:
+        """Parse WATCHLIST='SYM1:EXCH1,SYM2:EXCH2' into [(sym, exch), ...]."""
+        out: list[tuple[str, str]] = []
+        for entry in self.watchlist.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                sym, exch = entry.split(":", 1)
+                out.append((sym.strip(), exch.strip()))
+            else:
+                out.append((entry, "NSE"))
+        return out
 
     def is_live(self) -> bool:
         """Actually place real orders? Requires mode=live AND paper_trade=false."""
