@@ -162,7 +162,10 @@ class MarketScheduler:
         latest_prices: dict[str, float] = {}
         candle_dfs: dict[str, tuple[str, object]] = {}  # symbol -> (exchange, df)
 
-        for sym, exch in pairs:
+        # Parallel candle fetch — one bad symbol shouldn't kill the tick.
+        fetch_started = datetime.now(IST)
+
+        async def _fetch_one(sym: str, exch: str):
             try:
                 df = await asyncio.to_thread(
                     session.fetch_candles_for_symbol,
@@ -172,13 +175,32 @@ class MarketScheduler:
                     None,
                     None,
                 )
-                if len(df) < 20:
-                    log.warning("scheduler_too_few_candles", symbol=sym, rows=len(df))
-                    continue
-                latest_prices[sym] = float(df["close"].iloc[-1])
-                candle_dfs[sym] = (exch, df)
+                return sym, exch, df, None
             except Exception as e:
-                log.warning("scheduler_fetch_failed", symbol=sym, error=str(e))
+                return sym, exch, None, e
+
+        results = await asyncio.gather(
+            *[_fetch_one(sym, exch) for sym, exch in pairs],
+            return_exceptions=False,
+        )
+        for sym, exch, df, err in results:
+            if err is not None:
+                log.warning("scheduler_fetch_failed", symbol=sym, error=str(err))
+                continue
+            if df is None or len(df) < 20:
+                rows = 0 if df is None else len(df)
+                log.warning("scheduler_too_few_candles", symbol=sym, rows=rows)
+                continue
+            latest_prices[sym] = float(df["close"].iloc[-1])
+            candle_dfs[sym] = (exch, df)
+
+        fetch_ms = int((datetime.now(IST) - fetch_started).total_seconds() * 1000)
+        log.info(
+            "scheduler_fetch_done",
+            fetched=len(candle_dfs),
+            requested=len(pairs),
+            elapsed_ms=fetch_ms,
+        )
 
         # 1. Mark-to-market: close any trades that hit SL/target
         orch = get_orchestrator()
@@ -200,8 +222,10 @@ class MarketScheduler:
             symbols_in_trade = {
                 r[0] for r in db.query(Trade.symbol).filter(Trade.status == "OPEN").all()
             }
+        skipped = 0
         for sym, (_exch, df) in candle_dfs.items():
             if sym in symbols_in_trade:
+                skipped += 1
                 log.debug("scheduler_skip_in_trade", symbol=sym)
                 continue
             set_mock_quote(sym, latest_prices[sym])
@@ -213,6 +237,7 @@ class MarketScheduler:
         log.info(
             "scheduler_tick_done",
             symbols=len(candle_dfs),
+            skipped=skipped,
             closed=len(closed),
             total_ticks=self.status.ticks,
         )

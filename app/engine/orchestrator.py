@@ -67,7 +67,14 @@ class Orchestrator:
         return [self._process_one(sig, is_expiry_day) for sig in signals]
 
     # ---- internal ---------------------------------------------------------
-    def _persist_signal(self, sig: Signal, ai_approved: bool | None, ai_reasoning: str | None) -> int:
+    def _persist_signal(
+        self,
+        sig: Signal,
+        ai_approved: bool | None,
+        ai_reasoning: str | None,
+        ai_confidence: float | None = None,
+        ai_source: str | None = None,
+    ) -> int:
         with self._session_factory() as session:
             row = SignalRow(
                 symbol=sig.symbol,
@@ -77,6 +84,8 @@ class Orchestrator:
                 context=sig.context or {},
                 ai_approved=ai_approved,
                 ai_reasoning=ai_reasoning,
+                ai_confidence=ai_confidence,
+                ai_source=ai_source,
             )
             session.add(row)
             session.commit()
@@ -103,7 +112,13 @@ class Orchestrator:
             "confidence": sig.confidence, "context": sig.context,
         }
 
-        signal_id = self._persist_signal(sig, validation.approved, validation.reasoning)
+        signal_id = self._persist_signal(
+            sig,
+            validation.approved,
+            validation.reasoning,
+            ai_confidence=validation.confidence,
+            ai_source=validation.source,
+        )
 
         if not validation.approved:
             log.info("signal_rejected_by_ai", **sig_dict, reasoning=validation.reasoning)

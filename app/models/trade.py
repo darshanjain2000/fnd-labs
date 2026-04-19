@@ -18,6 +18,10 @@ class Signal(Base):
     context: Mapped[dict] = mapped_column(JSON, default=dict)
     ai_approved: Mapped[bool | None] = mapped_column(default=None)
     ai_reasoning: Mapped[str | None] = mapped_column(String(2000), default=None)
+    ai_confidence: Mapped[float | None] = mapped_column(Float, default=None)
+    """LLM's own confidence 0..1 (distinct from strategy's `confidence`)."""
+    ai_source: Mapped[str | None] = mapped_column(String(16), default=None)
+    """One of: 'llm', 'disabled', 'fallback', 'spend_cap' — which path produced the decision."""
 
     trade: Mapped["Trade | None"] = relationship(back_populates="signal", uselist=False)
 
