@@ -20,7 +20,7 @@ env/
 *.env
 
 # IDE
-.vscode/
+# .vscode/
 .idea/
 *.swp
 
