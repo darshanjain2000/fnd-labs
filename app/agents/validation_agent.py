@@ -71,6 +71,13 @@ class ValidationAgent:
         )
         system = _PRESETS.get(s.agent_preset, _PRESETS["balanced"])
 
+        log.debug(
+            "llm_validating",
+            symbol=signal.symbol,
+            strategy=signal.strategy,
+            side=signal.side,
+            confidence=signal.confidence,
+        )
         try:
             result = self.llm.chat_json(system, user, SCHEMA_HINT)
         except SpendCapExceeded as e:

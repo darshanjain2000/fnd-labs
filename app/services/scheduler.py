@@ -56,6 +56,7 @@ class MarketScheduler:
         self.status = SchedulerStatus()
         self._squared_off_on: str | None = None  # "YYYY-MM-DD" of last square-off
         self._last_idle_log_min: int = -1  # throttle "market closed" log to once/min
+        self._last_heartbeat_at: datetime | None = None  # throttle heartbeat log
 
     # ---- public API ------------------------------------------------------
     def start(self) -> bool:
@@ -108,6 +109,44 @@ class MarketScheduler:
         hrs = int(delta.total_seconds() // 3600)
         mins = int((delta.total_seconds() % 3600) // 60)
         return f"{candidate.strftime('%a %d %b %H:%M IST')} (in {hrs}h {mins}m)"
+
+    def _maybe_log_heartbeat(self, now: datetime) -> None:
+        """Emit a live-status log if the configured heartbeat interval has elapsed.
+
+        Reads LOG_HEARTBEAT_INTERVAL_SEC from settings. Set to 0 to disable.
+        Pulls open-position and P&L stats from the risk engine singleton so the
+        heartbeat line shows a meaningful snapshot without touching the DB.
+
+        Args:
+            now: Current IST datetime (injected so tests can control it).
+        """
+        interval = get_settings().log_heartbeat_interval_sec
+        if interval <= 0:
+            return
+        if (
+            self._last_heartbeat_at is not None
+            and (now - self._last_heartbeat_at).total_seconds() < interval
+        ):
+            return
+
+        self._last_heartbeat_at = now
+        risk_stats = get_orchestrator().risk.stats
+        uptime_sec = (
+            int((now - self.status.started_at).total_seconds())
+            if self.status.started_at
+            else 0
+        )
+        hrs, rem = divmod(uptime_sec, 3600)
+        mins = rem // 60
+        log.info(
+            "scheduler_heartbeat",
+            tick=self.status.ticks,
+            open_positions=risk_stats.open_positions,
+            trades_today=risk_stats.trades_today,
+            realized_pnl=risk_stats.realized_pnl_today,
+            signals_seen=self.status.signals_seen,
+            uptime=f"{hrs}h {mins}m",
+        )
 
     async def _loop(self) -> None:
         log.info("scheduler_loop_entry")
@@ -241,6 +280,7 @@ class MarketScheduler:
             closed=len(closed),
             total_ticks=self.status.ticks,
         )
+        self._maybe_log_heartbeat(now_ist)
 
 
 # ---- module-level singleton ----------------------------------------------

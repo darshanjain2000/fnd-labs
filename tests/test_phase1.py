@@ -96,6 +96,14 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
     monkeypatch.setattr(settings, "watchlist", "A:NSE,B:NSE,C:NSE,D:NSE", raising=False)
 
     # Stub orchestrator so the tick doesn't touch DB/broker.
+    class _StubRiskStats:
+        open_positions = 0
+        trades_today = 0
+        realized_pnl_today = 0.0
+
+    class _StubRisk:
+        stats = _StubRiskStats()
+
     class _StubOrch:
         class _Exec:
             def mark_to_market(self, prices, reason_tag):
@@ -104,6 +112,7 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
             def force_close_all(self, prices, reason):
                 return []
         execution_agent = _Exec()
+        risk = _StubRisk()
 
         def run(self, sym, df):
             return []

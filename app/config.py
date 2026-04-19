@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: Literal["pretty", "json"] = "pretty"
     """'pretty' = human-readable colored console, 'json' = structured logs for prod."""
+    log_heartbeat_interval_sec: int = 300
+    """Emit a live-status heartbeat log every N seconds while the market is open.
+
+    Shows tick count, open positions, realized P&L, and uptime.
+    Set to 0 to disable. Read from LOG_HEARTBEAT_INTERVAL_SEC in .env.
+    """
 
     # ---- Helpers -----------------------------------------------------
     def strategy_list(self) -> list[str]:

@@ -64,6 +64,7 @@ class Orchestrator:
 
     def run(self, symbol: str, candles: pd.DataFrame, is_expiry_day: bool = False) -> list[PipelineOutcome]:
         signals = self.signal_agent.generate(symbol, candles)
+        log.debug("pipeline_stage_signals", symbol=symbol, count=len(signals))
         return [self._process_one(sig, is_expiry_day) for sig in signals]
 
     # ---- internal ---------------------------------------------------------
