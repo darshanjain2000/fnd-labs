@@ -21,9 +21,9 @@ Every 60 seconds during market hours (IST Mon-Fri 09:15-15:30), the bot fetches 
                               └────────────┬────────────┘
                                            │
                                 ┌──────────┴──────────┐
-                                │  MarketScheduler     │  <- the heartbeat
-                                │  (every 60s in IST   │
-                                │   market hours)       │
+                                │  MarketScheduler    │  <- the heartbeat
+                                │  (every 60s in IST  │
+                                │   market hours)     │
                                 └──────────┬──────────┘
                                            │
                ┌─────────────┬─────────────┼─────────────┬──────────────┐
