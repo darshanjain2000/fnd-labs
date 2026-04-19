@@ -47,7 +47,7 @@ def angel(monkeypatch):
 
 def test_angel_requires_credentials(monkeypatch):
     for k in ("ANGEL_API_KEY", "ANGEL_CLIENT_CODE", "ANGEL_PIN", "ANGEL_TOTP_SECRET"):
-        monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv(k, "")
     reload_settings()
     with pytest.raises(RuntimeError, match="Angel credentials missing"):
         AngelBroker(smart_connect=FakeSmart())

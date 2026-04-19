@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.api.deps import reset_cached_singletons
 from app.config import get_settings, reload_settings
+from app.services.angel_session import reset_angel_session
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -84,4 +85,5 @@ def reload_from_env() -> dict:
     """Re-read .env from disk and rebuild cached broker/agents."""
     reload_settings()
     reset_cached_singletons()
+    reset_angel_session()
     return {"reloaded": True, "config": _safe_view()}
