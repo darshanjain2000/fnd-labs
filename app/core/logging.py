@@ -23,6 +23,7 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "scheduler_skip_in_trade":      "   Skipping {symbol} -- already in an open trade",
     "scheduler_eod_square_off":     "** EOD SQUARE-OFF  closed {closed} trades",
     "scheduler_tick_failed":        "XX Tick CRASHED: {exc_info}",
+    "scheduler_heartbeat":          "** LIVE  tick={tick}  open={open_positions}  trades_today={trades_today}  pnl={realized_pnl:.2f}  signals={signals_seen}  uptime={uptime}",
     # Angel
     "scrip_master_downloading":     "   Downloading Angel scrip master (~50MB)...",
     "scrip_master_downloaded":      "   Scrip master downloaded: {rows} instruments",
@@ -30,6 +31,16 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "angel_session_started":        "   Logged into Angel as {client}",
     "angel_token_resolved_local":   "   Resolved {symbol} -> token {token} (scrip={matched})",
     "angel_candles_fetched":        "   Fetched {rows} {interval} candles for token {token}",
+    # Pipeline stages
+    "pipeline_stage_signals":       "   [{symbol}] {count} signal(s) from strategies",
+    # LLM
+    "llm_validating":               "   [{symbol}] LLM validating {strategy} {side} (conf={confidence:.2f})...",
+    "llm_call_ok":                  "   LLM call ok  spend=${spend_usd:.4f} today",
+    "llm_call_failed":              "!! LLM call FAILED: {error}",
+    "llm_parse_failed":             "!! LLM response parse FAILED: {error}",
+    "llm_daily_reset":              "   LLM daily spend reset  prev=${prev_usd:.4f}",
+    "llm_spend_cap_degrade":        "!! LLM spend cap hit, using fallback: {error}",
+    "llm_no_api_key_degrade":       "!! LLM: no API key set -- using confidence fallback",
     # Strategy / AI / risk
     "signal_rejected_by_ai":        "   [X] AI rejected  {symbol} {strategy} {side} conf={confidence:.2f}  --  {reasoning}",
     "signal_rejected_by_risk":      "   [X] Risk rejected  {symbol} {strategy} {side}  --  {reason}",

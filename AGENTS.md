@@ -55,7 +55,29 @@ Target: **all tests pass**. The baseline is 47 tests.
 
 ---
 
-## 4. Code Style
+## 4. Before Writing Any Code (AI Agents: Read This First)
+
+1. **Read the existing module first.** Do not duplicate logic that already exists. Check `__init__.py` exports before exploring subdirectories.
+2. **Identify inputs, outputs, and failure modes** before writing a single line.
+3. **Write implementation and tests together.** Tests are never optional or deferred.
+4. **Check `app/config.py`** before adding any new behavior flag — use a Pydantic field, not a raw `os.environ` read.
+5. **Check `deps.py`** before instantiating any service — it is the singleton wiring point.
+6. **Do not refactor and add a feature in the same change.** One thing at a time.
+7. **Reference existing code by name** in your response — do not reprint large blocks that already exist.
+
+### Self-Review Before Outputting (Mandatory)
+
+Before posting any code, verify:
+- [ ] Every function has type annotations and a docstring.
+- [ ] Every new function has at least one test.
+- [ ] `ruff check` and `ruff format` would pass (88-char lines, no unused imports, double quotes).
+- [ ] No `TODO`, `pass`, `...`, or `raise NotImplementedError` in production paths.
+- [ ] No logic duplicated from an existing helper.
+- [ ] `pytest -q` still passes (run it).
+
+---
+
+## 5. Code Style
 
 ### Python Patterns Used Here
 
@@ -75,9 +97,19 @@ Target: **all tests pass**. The baseline is 47 tests.
 - No bare `except:` — catch specific exception types.
 - Secrets (API keys, PINs, TOTP secrets) live only in `.env` — never hardcode or log them. `config_router.py` masks them in `/config` output.
 
+### Logging Rules
+
+- Every long-running or multi-stage task must log its progress to the terminal.
+- For tasks that may take more than a few seconds (e.g., LLM calls, parallel fetches), emit a log at the start and on completion.
+- The scheduler must emit a live-status heartbeat log at a configurable interval (see `log_heartbeat_interval_sec` in `app/config.py`). This log must show tick count, open positions, realized P&L, and uptime.
+- Use structured event names (see `app/core/logging.py`'s `_EVENT_FRIENDLY`) for all logs. Add a new template if your event is not already mapped.
+- Never use `print()`. Always use `log.info()` or `log.debug()` with event names and key-value pairs.
+- For one-shot tasks, log only on completion unless the operation is expected to take a long time.
+- All logs must be human-readable in both 'pretty' and 'json' log formats.
+
 ---
 
-## 5. Key Conventions (Things That Differ From Typical Projects)
+## 6. Key Conventions (Things That Differ From Typical Projects)
 
 ### Settings are a singleton — mutate via reload, not import
 All config is read once at startup via `get_settings()` (lru_cache). To change runtime settings, `POST /config` then `POST /config/reload`, which calls `reload_settings()` and `reset_cached_singletons()` in `deps.py`. Do **not** read `os.environ` directly.
@@ -102,7 +134,7 @@ The scheduler sets `is_expiry_day` based on the symbol's expiry. If you add a ne
 
 ---
 
-## 6. Project Structure Quick-Reference
+## 7. Project Structure Quick-Reference
 
 | Path | Responsibility |
 |------|---------------|
@@ -124,7 +156,120 @@ The scheduler sets `is_expiry_day` based on the symbol's expiry. If you add a ne
 
 ---
 
-## 7. Adding Common Things
+## 8. Coding Standards (Mandatory for Every Change)
+
+These rules apply to every function, class, and test written in this repo.
+They are enforced at review time; violations block merge.
+
+### Formatting
+
+- **Formatter**: `ruff format` (88-char line length). Run on every save.
+- **Linter**: `ruff check` — zero warnings before commit.
+- Double quotes for all strings.
+- 4-space indent, no tabs.
+
+```powershell
+# Run both
+ruff format app/ tests/
+ruff check app/ tests/
+```
+
+### Type Annotations & Docstrings
+
+- **Every** function and method must have fully annotated parameters and return type.
+- **Every public** function and class must have a Google-style docstring:
+
+```python
+def evaluate(self, symbol: str, candles: pd.DataFrame) -> Signal | None:
+    """Evaluate strategy on the latest candle batch.
+
+    Args:
+        symbol: NSE trading symbol (e.g. "NIFTY").
+        candles: OHLCV DataFrame with pre-computed indicators.
+
+    Returns:
+        A Signal if a setup fires, None otherwise.
+    """
+```
+
+- Private helpers need at minimum a one-line docstring.
+
+### Function Design
+
+- **One responsibility per function.** If it does two things, split it.
+- **Max 30 lines of logic** per function (not counting docstring).
+- **Max 2 levels of nesting.** If you need a third, extract a helper.
+- **No global mutable state.** The `_MOCK_QUOTES` dict in `deps.py` is the only accepted exception (test seam).
+- **Pure by default.** Functions with side effects must signal it in their name: `save_*`, `send_*`, `write_*`, `update_*`.
+
+### Naming
+
+| Thing | Convention | Example |
+|---|---|---|
+| Functions & variables | `snake_case` | `compute_indicators` |
+| Classes | `PascalCase` | `RiskEngine` |
+| Constants | `UPPER_SNAKE_CASE` | `MARKET_OPEN` |
+| Private members | `_prefix` | `_apply_sqlite_additions` |
+| Test functions | `test_<fn>_<behaviour>` | `test_position_size_rounds_down_to_lot` |
+
+No single-letter names (except `i`, `j` in loops). No abbreviations except `url`, `id`, `db`, `qty`, `pct`.
+
+### Imports
+
+- Order: **stdlib → third-party → local**. One blank line between groups.
+- Absolute imports only (`from app.config import get_settings`, never `from . import`).
+- Never `import *`. Never leave an unused import.
+
+### Error Handling
+
+- Never `except:` or `except Exception` without a comment explaining why broad catch is justified.
+- Never silently swallow exceptions — always `log.warning()` or `log.error()` with context.
+- Raise domain-specific exceptions for business logic errors. The `SpendCapExceeded` in `llm_client.py` is the pattern to follow.
+- Best-effort cleanup blocks (e.g., cancel SL on broker after close) are the only acceptable `except Exception: pass` — always mark with `# pragma: no cover` and a comment.
+
+---
+
+## 9. Testing Standards (Tests Are Never Optional)
+
+### Structure
+
+- **One test file per source module**: `app/payments.py` → `tests/test_payments.py`.
+- **Shared fixtures in `tests/conftest.py` only** — never duplicated across files.
+- `pytest -q` must stay green after every change. Baseline: 47 tests.
+
+### What to Write
+
+| Scenario | Required? |
+|---|---|
+| Happy path: expected inputs → expected outputs | Yes |
+| Edge cases: empty, zero, None, boundary values | Yes |
+| Error paths: invalid inputs raise correct exception | Yes |
+| Mock verification: assert mock called with expected args | Yes |
+| Implementation internals | No — test through public interface only |
+
+### Naming
+
+```python
+def test_position_size_rounds_down_to_lot() -> None: ...
+def test_kill_switch_blocks_all_signals() -> None: ...
+def test_validate_raises_on_spend_cap_exceeded() -> None: ...
+```
+
+### Determinism & Isolation
+
+- No test depends on state from another test.
+- No randomness or real-time logic without mocking (`freezegun` for time, mock for `random`).
+- **Mock at the boundary only**: I/O, network, database, broker calls. Never mock inside business logic.
+- Always assert mocks were called with the exact expected arguments.
+
+### Coverage Target
+
+- 90%+ on all business logic (agents, engine, strategies, memory).
+- Do not write tests just to hit a number — write tests that catch real regressions.
+
+---
+
+## 10. Adding Common Things
 
 ### New Trading Strategy
 1. Create `app/strategies/my_strategy.py`, subclass `Strategy`, implement `evaluate()`.
@@ -150,7 +295,25 @@ The scheduler sets `is_expiry_day` based on the symbol's expiry. If you add a ne
 
 ---
 
-## 8. What Helps the AI Work Effectively Here
+## 11. Known Gaps in the Current Codebase
+
+These are real issues already identified by audit. Fix them opportunistically when touching nearby code — do not batch-fix all at once.
+
+| File | Issue | Priority |
+|---|---|---|
+| `app/agents/execution_agent.py` | Most methods lack Google-style docstrings | Medium |
+| `app/agents/validation_agent.py` | `validate()` lacks `Args/Returns` docstring | Medium |
+| `app/agents/signal_agent.py` | `generate()` lacks docstring | Low |
+| `app/services/llm_client.py` | `except Exception` in `chat_json` is intentionally broad but undocumented — add a comment | Low |
+| `app/services/angel_session.py` | Multiple `except Exception` blocks — each needs a comment explaining why | Medium |
+| `tests/` | No `conftest.py` — shared fixtures like `_sig()` and `_engine()` are duplicated across test files | Medium |
+| `tests/test_risk_engine.py` | Test helper `_sig()` not typed or docstringed | Low |
+| All `app/api/` routes | Route handlers lack docstrings (Swagger shows blank descriptions) | Low |
+| `app/engine/risk_engine.py` | `position_size()` docstring is one line — missing `Args/Returns` | Low |
+
+---
+
+## 12. What Helps the AI Work Effectively Here
 
 - **Always read `docs/ARCHITECTURE.md` first** for any non-trivial task. It maps every file to plain-English behavior.
 - **Check `app/config.py`** before adding any new behavior flag — the pattern is to add a Pydantic field, not an env read.
