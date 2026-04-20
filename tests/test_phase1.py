@@ -94,6 +94,8 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
     from app.config import get_settings
     settings = get_settings()
     monkeypatch.setattr(settings, "watchlist", "A:NSE,B:NSE,C:NSE,D:NSE", raising=False)
+    # Disable stagger so this test measures raw parallelism, not stagger delay.
+    monkeypatch.setattr(settings, "fetch_stagger_ms", 0, raising=False)
 
     # Stub orchestrator so the tick doesn't touch DB/broker.
     class _StubRiskStats:
