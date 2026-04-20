@@ -79,6 +79,9 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
         })
 
     class _FakeSession:
+        def ensure_ready(self) -> None:
+            pass  # no-op — session is always "ready" in tests
+
         def fetch_candles_for_symbol(self, sym, exch, interval, start, end):
             time.sleep(0.3)  # simulated IO latency
             return _fake_df()

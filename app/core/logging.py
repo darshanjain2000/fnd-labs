@@ -31,7 +31,7 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "scrip_master_loaded_from_cache": "   Scrip master loaded from cache ({rows} rows)",
     "angel_session_started":        "   Logged into Angel as {client}",
     "angel_token_resolved_local":   "   Resolved {symbol} -> token {token} (scrip={matched})",
-    "angel_candles_fetched":        "   Fetched {rows} {interval} candles for token {token}",
+    "angel_candles_fetched":        "   Fetched {rows} {interval} candles for {symbol} (token={token})",
     # Pipeline stages
     "pipeline_stage_signals":       "   [{symbol}] {count} signal(s) from strategies",
     # LLM
