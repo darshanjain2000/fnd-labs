@@ -48,7 +48,25 @@ class ValidationAgent:
         approved = sig.confidence >= s.ai_fallback_approve_threshold
         return Validation(approved, sig.confidence, tag, source=tag)
 
-    def validate(self, signal: Signal, rag_context: list[str] | None = None) -> Validation:
+    def validate(
+        self,
+        signal: Signal,
+        rag_context: list[str] | None = None,
+        regime: str | None = None,
+        corroborating_count: int = 0,
+    ) -> Validation:
+        """Validate a signal via LLM or fallback.
+
+        Args:
+            signal: The trading signal to validate.
+            rag_context: Similar past trade descriptions for LLM context.
+            regime: Current market regime (e.g. 'trend_up', 'range').
+            corroborating_count: How many strategies fired the same side
+                this tick (>=1 means this signal, 2+ means ensemble agreement).
+
+        Returns:
+            Validation result with approved flag, confidence, and reasoning.
+        """
         s = get_settings()
 
         if not s.openrouter_enabled:
@@ -57,6 +75,16 @@ class ValidationAgent:
         rag_block = ""
         if rag_context:
             rag_block = "\n\nSimilar past trades:\n- " + "\n- ".join(rag_context[:5])
+
+        regime_line = f"Market regime: {regime}" if regime else ""
+        corroboration_line = (
+            f"Corroborating strategies this tick: {corroborating_count}"
+            if corroborating_count > 1
+            else ""
+        )
+        extra = "\n".join(filter(None, [regime_line, corroboration_line]))
+        if extra:
+            extra = "\n" + extra
 
         user = (
             f"Symbol: {signal.symbol}\n"
@@ -67,6 +95,7 @@ class ValidationAgent:
             f"Target: {signal.target}\n"
             f"Strategy confidence: {signal.confidence:.2f}\n"
             f"Indicators: {signal.context}"
+            f"{extra}"
             f"{rag_block}"
         )
         system = _PRESETS.get(s.agent_preset, _PRESETS["balanced"])

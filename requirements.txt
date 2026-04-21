@@ -33,8 +33,11 @@ structlog>=24.1
 # chromadb>=0.5
 # sentence-transformers>=3.0
 
-# Backtesting (optional, Phase 3)
-# vectorbt>=0.26
+# Backtesting (Phase 3)
+# vectorbt>=0.26  # optional: richer analytics
+
+# Optimisation (Phase 3)
+optuna>=3.6
 
 # Dev / test
 pytest>=8.0

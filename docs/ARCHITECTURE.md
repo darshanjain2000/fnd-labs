@@ -6,9 +6,30 @@ A human-language guide to **what the bot actually does today**, how the pieces f
 
 ---
 
+
 ## 1. What the bot does, in one paragraph
 
-Every 60 seconds during market hours (IST Mon-Fri 09:15-15:30), the bot fetches fresh 5-minute candles from Angel One for each symbol in its watchlist (currently 8: NIFTY, BANKNIFTY, FINNIFTY, RELIANCE, HDFCBANK, TCS, INFY, ICICIBANK). It runs three technical strategies on each symbol (RSI reversal, EMA breakout, VWAP pullback) and collects any signals. Each signal is optionally sent to an LLM (OpenRouter / Claude) for a second opinion using past-trade context from SQL. If approved, a risk engine checks 7 gates (kill switch, daily loss, open-position cap, etc.) and sizes the position. If everything passes, the trade goes to a paper broker (simulated fill with slippage) or Angel One (real order). All OPEN trades are marked-to-market every tick — if price hits stop-loss or target, they auto-close. At 15:20 IST the bot force-closes every remaining open trade (EOD square-off). Every signal, trade, and decision is persisted to SQLite and exposed through a FastAPI HTTP interface.
+Every 60 seconds during market hours (IST Mon-Fri 09:15-15:30), the bot fetches fresh 5-minute candles from Angel One for each symbol in its watchlist (currently 8: NIFTY, BANKNIFTY, FINNIFTY, RELIANCE, HDFCBANK, TCS, INFY, ICICIBANK). It runs seven technical strategies on each symbol (RSI reversal, EMA breakout, VWAP pullback, Supertrend, MACD divergence, Bollinger Squeeze, ORB breakout) and collects any signals. Each signal is optionally sent to an LLM (OpenRouter / Claude) for a second opinion using past-trade context from SQL. If approved, a risk engine checks 7 gates (kill switch, daily loss, open-position cap, etc.) and sizes the position. If everything passes, the trade goes to a paper broker (simulated fill with slippage) or Angel One (real order). All OPEN trades are marked-to-market every tick — if price hits stop-loss or target, they auto-close. At 15:20 IST the bot force-closes every remaining open trade (EOD square-off). Every signal, trade, and decision is persisted to SQLite and exposed through a FastAPI HTTP interface.
+## Backtesting & Optimization
+
+- Run a backtest for a single strategy and symbol:
+       ```powershell
+       python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
+       ```
+- Run Optuna optimization for all 7 strategies on a symbol (default: last 5 years):
+       ```powershell
+       python optimize_all.py --symbol NIFTY
+       ```
+- This creates `config/params_nifty.yaml` with best params for each strategy. The live pipeline will auto-load these for that symbol.
+- To override date range or trials:
+       ```powershell
+       python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50
+       ```
+
+### YAML Convention
+- Optimized params are always saved as `config/params_{symbol}.yaml` (lowercase symbol).
+- Each file contains a mapping of strategy name to its best parameters.
+- The live pipeline (SignalAgent) will use these automatically if present.
 
 ---
 

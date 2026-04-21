@@ -1,6 +1,16 @@
-"""Orchestrator: Signal -> Validation (AI) -> Risk -> Execution (with DB persistence)."""
+"""Orchestrator: Signal -> Conviction filter -> Validation (AI) -> Risk -> Execution.
+
+Phase 3 changes:
+- Ensemble conviction: only trade when min_strategy_agreement strategies agree
+  on the same side for a symbol. Picks the single best signal from the majority.
+- Low-confidence signals (below min_signal_confidence) are dropped before counting.
+- Signal memory window: recent signals are kept for ``signal_memory_ticks`` ticks
+  so conviction can build across candles (e.g. RSI fires tick 1, EMA fires tick 3).
+- At most ONE trade per symbol per tick.
+"""
 from __future__ import annotations
 
+from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -11,9 +21,10 @@ from sqlalchemy.orm import Session
 from app.agents.execution_agent import ExecutionAgent
 from app.agents.signal_agent import SignalAgent
 from app.agents.validation_agent import ValidationAgent
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db import SessionLocal
+from app.engine.regime_detector import detect_regime
 from app.engine.risk_engine import RiskEngine
 from app.memory.trade_memory import TradeMemory
 from app.models.trade import Signal as SignalRow
@@ -27,6 +38,22 @@ log = get_logger(__name__)
 
 @dataclass
 class PipelineOutcome:
+    """Result of a single signal through the pipeline.
+
+    Attributes:
+        signal: Dict snapshot of the Signal fields.
+        signal_id: DB row id of the persisted signal (or None).
+        ai_approved: Whether the AI validation agent approved.
+        ai_reasoning: Reasoning string from validation.
+        risk_approved: Whether the risk engine approved.
+        risk_reason: Machine-readable rejection reason or "ok".
+        qty: Computed position size.
+        executed: True if an order was placed.
+        trade_id: DB row id of the opened trade (or None).
+        order_id: Broker order id string (or None).
+        fill_price: Average fill price (or None).
+    """
+
     signal: dict[str, Any]
     signal_id: int | None
     ai_approved: bool | None
@@ -40,7 +67,99 @@ class PipelineOutcome:
     fill_price: float | None = None
 
 
+def select_best_signal(signals: list[Signal], settings: Settings) -> Signal | None:
+    """Apply ensemble conviction filter and return the single best signal.
+
+    Steps:
+    1. Drop signals below ``min_signal_confidence``.
+    2. Group remaining by side (BUY / SELL), count distinct strategies per side.
+    3. Pick the side with the highest strategy count.
+       - Ties: pick the side with higher average confidence.
+    4. If best count < ``min_strategy_agreement`` → return None (no conviction).
+    5. Return the highest-confidence signal from the winning side.
+
+    Args:
+        signals: Raw signals from the SignalAgent (may be empty).
+        settings: Current application settings.
+
+    Returns:
+        The single best Signal to trade, or None if conviction is insufficient.
+    """
+    if not signals:
+        return None
+
+    min_conf = settings.min_signal_confidence
+    min_agree = settings.min_strategy_agreement
+
+    # Step 1: confidence gate
+    strong = [s for s in signals if s.confidence >= min_conf]
+    dropped = len(signals) - len(strong)
+    if dropped:
+        for s in signals:
+            if s.confidence < min_conf:
+                log.debug(
+                    "signal_dropped_low_confidence",
+                    symbol=s.symbol,
+                    strategy=s.strategy,
+                    side=s.side,
+                    confidence=s.confidence,
+                    threshold=min_conf,
+                )
+    if not strong:
+        return None
+
+    # Step 2: group by side
+    by_side: dict[str, list[Signal]] = {}
+    for s in strong:
+        by_side.setdefault(s.side, []).append(s)
+
+    # Step 3: pick best side
+    side_counts = {side: len(sigs) for side, sigs in by_side.items()}
+    best_side = max(
+        side_counts,
+        key=lambda side: (side_counts[side], _avg_confidence(by_side[side])),
+    )
+    best_count = side_counts[best_side]
+
+    # Step 4: conviction gate
+    if best_count < min_agree:
+        log.info(
+            "ensemble_insufficient",
+            symbol=strong[0].symbol,
+            side_counts=dict(side_counts),
+            required=min_agree,
+        )
+        return None
+
+    # Step 5: pick highest-confidence signal from the winning side
+    winner = max(by_side[best_side], key=lambda s: s.confidence)
+    log.info(
+        "ensemble_selected",
+        symbol=winner.symbol,
+        side=best_side,
+        agreement=best_count,
+        total=len(strong),
+        strategy=winner.strategy,
+        confidence=winner.confidence,
+    )
+    return winner
+
+
+def _avg_confidence(signals: list[Signal]) -> float:
+    """Return mean confidence for a list of signals.
+
+    Args:
+        signals: Non-empty list of Signal instances.
+
+    Returns:
+        Average confidence value.
+    """
+    return sum(s.confidence for s in signals) / len(signals)
+
+
 class Orchestrator:
+    """Glues SignalAgent -> ensemble filter -> ValidationAgent -> RiskEngine -> ExecutionAgent."""
+
     def __init__(
         self,
         broker: Broker,
@@ -52,6 +171,18 @@ class Orchestrator:
         lot_size: int = 1,
         session_factory: Callable[[], Session] = SessionLocal,
     ) -> None:
+        """Initialise the orchestrator.
+
+        Args:
+            broker: Broker instance (paper or live).
+            risk_engine: Risk engine (defaults to RiskEngine with current settings).
+            signal_agent: Strategy signal generator.
+            validation_agent: LLM validation agent.
+            rag: RAG store for similar-trade context.
+            memory: SQL trade memory for similar-trade context.
+            lot_size: F&O lot size for position sizing.
+            session_factory: SQLAlchemy session factory.
+        """
         self.broker = broker
         self.risk = risk_engine or RiskEngine()
         self.signal_agent = signal_agent or SignalAgent()
@@ -61,11 +192,100 @@ class Orchestrator:
         self.memory = memory or TradeMemory(session_factory=session_factory)
         self.lot_size = lot_size
         self._session_factory = session_factory
+        # Signal memory: per-symbol deque of (tick_id, Signal) tuples
+        self._signal_buffer: dict[str, deque[tuple[int, Signal]]] = {}
+        self._tick_counter: int = 0
 
-    def run(self, symbol: str, candles: pd.DataFrame, is_expiry_day: bool = False) -> list[PipelineOutcome]:
+    def run(
+        self,
+        symbol: str,
+        candles: pd.DataFrame,
+        is_expiry_day: bool = False,
+    ) -> list[PipelineOutcome]:
+        """Run the full pipeline for *symbol*.
+
+        1. Generate signals from all enabled strategies.
+        2. Apply ensemble conviction filter (select_best_signal).
+        3. Send the single best signal through AI -> Risk -> Execution.
+
+        At most ONE trade per symbol per tick.
+
+        Args:
+            symbol: NSE trading symbol.
+            candles: OHLCV DataFrame with indicators.
+            is_expiry_day: Whether today is the contract expiry day.
+
+        Returns:
+            List of PipelineOutcome (0 or 1 element).
+        """
         signals = self.signal_agent.generate(symbol, candles)
         log.debug("pipeline_stage_signals", symbol=symbol, count=len(signals))
-        return [self._process_one(sig, is_expiry_day) for sig in signals]
+
+        s = get_settings()
+        self._tick_counter += 1
+
+        # -- Signal memory: merge current signals with recent buffer --
+        merged = self._merge_with_buffer(symbol, signals, s)
+
+        best = select_best_signal(merged, s)
+        if best is None:
+            return []
+
+        regime = detect_regime(candles)
+        corroborating = sum(1 for sig in merged if sig.side == best.side)
+        return [self._process_one(best, is_expiry_day, regime=regime, corroborating_count=corroborating)]
+
+    def _merge_with_buffer(
+        self,
+        symbol: str,
+        new_signals: list[Signal],
+        settings: Settings,
+    ) -> list[Signal]:
+        """Merge current tick's signals with the rolling signal memory buffer.
+
+        Keeps only the most recent signal per strategy. Prunes entries older
+        than ``signal_memory_ticks`` ticks.
+
+        Args:
+            symbol: The trading symbol.
+            new_signals: Signals generated this tick.
+            settings: Current application settings.
+
+        Returns:
+            Deduplicated list of recent signals (current + buffered).
+        """
+        window = settings.signal_memory_ticks
+        if window <= 1:
+            # Memory disabled — use only current tick signals
+            return new_signals
+
+        tick = self._tick_counter
+        buf = self._signal_buffer.setdefault(symbol, deque())
+
+        # Add new signals to buffer
+        for sig in new_signals:
+            buf.append((tick, sig))
+
+        # Prune old entries
+        cutoff = tick - window
+        while buf and buf[0][0] <= cutoff:
+            buf.popleft()
+
+        # Deduplicate: keep most recent signal per strategy
+        seen: dict[str, Signal] = {}
+        for _tick_id, sig in buf:
+            seen[sig.strategy] = sig
+
+        merged = list(seen.values())
+        if len(merged) > len(new_signals):
+            log.info(
+                "signal_memory_merged",
+                symbol=symbol,
+                current=len(new_signals),
+                buffered=len(merged),
+                window=window,
+            )
+        return merged
 
     # ---- internal ---------------------------------------------------------
     def _persist_signal(
@@ -76,6 +296,18 @@ class Orchestrator:
         ai_confidence: float | None = None,
         ai_source: str | None = None,
     ) -> int:
+        """Write a Signal row to the database.
+
+        Args:
+            sig: The trading signal.
+            ai_approved: AI approval flag.
+            ai_reasoning: AI reasoning text.
+            ai_confidence: AI confidence score.
+            ai_source: Source of validation ("llm", "fallback", etc.).
+
+        Returns:
+            Primary key of the inserted Signal row.
+        """
         with self._session_factory() as session:
             row = SignalRow(
                 symbol=sig.symbol,
@@ -93,7 +325,24 @@ class Orchestrator:
             session.refresh(row)
             return row.id
 
-    def _process_one(self, sig: Signal, is_expiry_day: bool) -> PipelineOutcome:
+    def _process_one(
+        self,
+        sig: Signal,
+        is_expiry_day: bool,
+        regime: str | None = None,
+        corroborating_count: int = 1,
+    ) -> PipelineOutcome:
+        """Send a single signal through AI validation -> risk -> execution.
+
+        Args:
+            sig: The trading signal to process.
+            is_expiry_day: Whether today is the contract expiry day.
+            regime: Current market regime detected from candles.
+            corroborating_count: Number of strategies that fired the same side.
+
+        Returns:
+            PipelineOutcome describing the result.
+        """
         s = get_settings()
         if s.memory_source == "db":
             context_docs = self.memory.format_context(
@@ -105,7 +354,9 @@ class Orchestrator:
             )
         else:
             context_docs = []
-        validation = self.validation_agent.validate(sig, context_docs)
+        validation = self.validation_agent.validate(
+            sig, context_docs, regime=regime, corroborating_count=corroborating_count
+        )
 
         sig_dict = {
             "symbol": sig.symbol, "strategy": sig.strategy, "side": sig.side,

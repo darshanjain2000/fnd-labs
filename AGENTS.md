@@ -271,6 +271,33 @@ def test_validate_raises_on_spend_cap_exceeded() -> None: ...
 
 ## 10. Adding Common Things
 
+
+### Backtesting & Optimization
+
+#### Backtesting
+- Run a backtest for a single strategy and symbol:
+  ```powershell
+  python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
+  ```
+
+#### Optuna Hyperparameter Optimization
+- Run Optuna optimization for all 7 strategies on a symbol (default: last 5 years):
+  ```powershell
+  python optimize_all.py --symbol NIFTY
+  ```
+- This creates `config/params_nifty.yaml` with best params for each strategy. The live pipeline will auto-load these for that symbol.
+- To override date range or trials:
+  ```powershell
+  python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50
+  ```
+
+#### YAML Convention
+- Optimized params are always saved as `config/params_{symbol}.yaml` (lowercase symbol).
+- Each file contains a mapping of strategy name to its best parameters.
+- The live pipeline (SignalAgent) will use these automatically if present.
+
+---
+
 ### New Trading Strategy
 1. Create `app/strategies/my_strategy.py`, subclass `Strategy`, implement `evaluate()`.
 2. Register in `app/strategies/__init__.py` by adding to `ALL_STRATEGIES`.

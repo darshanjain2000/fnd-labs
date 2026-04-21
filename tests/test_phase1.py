@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.config import Settings
 from app.engine.orchestrator import Orchestrator
 from app.models import Base
 from app.models.trade import Signal
@@ -38,6 +39,11 @@ def _oversold_candles() -> pd.DataFrame:
     return compute_indicators(df)
 
 
+def _permissive_settings() -> Settings:
+    """Return settings with min_strategy_agreement=1 so single-strategy tests pass."""
+    return Settings(mode="paper", min_strategy_agreement=1, min_signal_confidence=0.0)
+
+
 # ---------- 1. AI confidence + source are persisted on the Signal row -------
 
 def test_orchestrator_persists_ai_confidence_and_source():
@@ -45,7 +51,8 @@ def test_orchestrator_persists_ai_confidence_and_source():
     broker = PaperBroker(quote_fn=lambda s: 100.0)
     orch = Orchestrator(broker=broker, session_factory=factory)
 
-    outcomes = orch.run("TEST", _oversold_candles())
+    with patch("app.engine.orchestrator.get_settings", return_value=_permissive_settings()):
+        outcomes = orch.run("TEST", _oversold_candles())
     assert outcomes, "expected at least one outcome"
     o = outcomes[0]
 

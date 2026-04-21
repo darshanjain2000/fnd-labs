@@ -27,6 +27,35 @@ class Settings(BaseSettings):
 
     default_lot_size: int = 1
 
+    # ---- Phase 3: Regime-aware routing --------------------------------
+    regime_filter_enabled: bool = True
+    """If True, strategies only run in their preferred market regimes."""
+
+    # ---- Phase 3: Multi-timeframe confirmation -----------------------
+    require_htf_agreement: bool = False
+    """If True, a signal is rejected unless the HTF EMA trend agrees with side."""
+    htf_interval: str = "15min"
+    """Pandas resample rule for the higher-timeframe candles (e.g. '15min', '1h')."""
+
+    # ---- Phase 3: Kelly position sizing ------------------------------
+    kelly_sizing_enabled: bool = False
+    """If True, apply a half-Kelly multiplier to risk_pct using recent trade history."""
+    kelly_lookback_trades: int = 20
+    """Number of recent closed trades used to estimate Kelly fraction."""
+
+    # ---- Phase 3: Ensemble conviction --------------------------------
+    min_strategy_agreement: int = 2
+    """Minimum strategies that must fire on the *same side* for a symbol
+    before the orchestrator will process any signal. Set to 2+ for ensemble
+    voting. Set to 1 to let any single strategy trade."""
+    min_signal_confidence: float = 0.5
+    """Minimum strategy confidence required for a signal to be considered.
+    Signals below this threshold are silently dropped."""
+    signal_memory_ticks: int = 3
+    """Number of recent ticks to remember signals from per symbol.
+    Allows conviction to build across candles (e.g. RSI fires tick 1,
+    EMA fires tick 3 -> both count). Set to 1 to disable memory."""
+
     # ---- AI layer ----------------------------------------------------
     openrouter_enabled: bool = True
     """Master switch for LLM validation. Off = strategies alone decide."""
