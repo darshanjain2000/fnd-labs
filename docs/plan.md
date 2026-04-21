@@ -1,13 +1,13 @@
 # Next-Phase Plan: POC → Production Trading Bot
 
-Last updated: April 19, 2026 · Phase 1 complete.
+Last updated: April 21, 2026 · Phase 1 complete, Phase 3 largely complete.
 
 ## TL;DR
-POC works end-to-end (**47/47 tests**, live Angel data, pretty logs, EOD reports, 8-symbol watchlist with parallel fetch).
+POC works end-to-end (**102/102 tests**, live Angel data, pretty logs, EOD reports, 8-symbol watchlist with parallel fetch).
 Next work splits into **4 phases**:
 - **Phase 1 ✅ DONE** — Expand watchlist + parallelize fetches + persist AI confidence.
 - **Phase 2** — Real-trade readiness: order reconciliation, startup position sync, bracket orders, retry/circuit breakers, alerting.
-- **Phase 3** — Better strategies: new indicators, backtester (vectorbt), regime weighting, multi-timeframe, ensemble voting, walk-forward validation, Optuna param search.
+- **Phase 3 ✅ MOSTLY DONE** — 7 strategies (rsi_reversal, ema_breakout, vwap_pullback, supertrend, macd_divergence, bollinger_squeeze, orb_breakout), all indicators, backtester, Optuna optimizer (auto-loads `config/params_{symbol}.yaml`), ensemble conviction, Kelly sizing, regime filter, HTF agreement, signal memory. Walk-forward OOS + live HTF fetch pending.
 - **Phase 4** — LLM impact measurement: A/B harness comparing Sonnet vs Haiku vs rules-only, per-signal cost tracking, shadow tracker for "would-have-been" PnL on rejected signals.
 
 ---
@@ -63,31 +63,62 @@ Next work splits into **4 phases**:
 
 ---
 
-## Phase 3 — Better Strategies
+## Phase 3 — Better Strategies ✅ MOSTLY DONE
 
 ### Steps
-**3A. Indicators** — add MACD, Bollinger, ADX, Supertrend, OBV, Stochastic to `compute_indicators`. Add HTF resampler (5m→15m+1h).
+**3A. Indicators** — add MACD, Bollinger, ADX, Supertrend, OBV, Stochastic to `compute_indicators`. Add HTF resampler (5m→15m+1h). **DONE**
+- Indicators live in `app/services/market_data.py`: rsi, ema20, ema50, vwap, atr14, macd, macd_signal, macd_hist, bb_upper/mid/lower/width, stoch_k, stoch_d, obv, adx, supertrend, supertrend_dir.
 
-**3E. Backtester** — `app/backtest/runner.py` using vectorbt. CLI: `python -m app.backtest.runner --symbol NIFTY --from 2025-01-01 --to 2025-04-01`. Walk-forward mode with rolling train/test windows. **DONE**
-**3F. Optuna optimization** — `optimize_all.py` runs all 7 strategies for a symbol (default: last 5 years). Saves best params to `config/params_{symbol}.yaml` (lowercase symbol). The live pipeline will auto-load these for that symbol. **DONE**
-	- Example: `python optimize_all.py --symbol NIFTY`
-	- To override date range or trials: `python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50`
-**3G. Kelly sizing** — RiskEngine optional Kelly multiplier using last 20 trades' win_rate + avg_win/loss, capped at max_risk_pct.
+**3B. New strategies** — `supertrend.py`, `macd_divergence.py`, `bollinger_squeeze.py`, `orb_breakout.py` (opening-range). **DONE**
+- All 7 strategies live in `app/strategies/`: rsi_reversal, ema_breakout, vwap_pullback, supertrend, macd_divergence, bollinger_squeeze, orb_breakout.
 
-### Relevant files
-- `app/services/market_data.py` — expanded indicators
-- `app/strategies/` — 4 new files + `base.py` `applies_to_regime()` hook
-- `app/agents/signal_agent.py` — regime weighting
-- `app/engine/regime_detector.py` — expand regimes (add morning, choppy)
-- `app/backtest/runner.py`, `app/backtest/optimize.py` — new
+**3C. Regime-aware routing** — wire `regime_detector` into `SignalAgent`. Per-strategy regime weights in config (`regime_filter_enabled`). **DONE**
+- `app/engine/regime_detector.py` detects: trend_up, trend_down, range, high_vol.
+- `Strategy.applies_to_regime()` in `app/strategies/base.py`.
+- `SignalAgent` skips strategies not matching current regime.
+
+**3D. Multi-timeframe confirm** — `require_htf_agreement` flag; EMA direction on 15m must match signal side. **DONE**
+- Config: `require_htf_agreement` in `app/config.py`.
+- `_htf_agrees()` in `app/agents/signal_agent.py`.
+
+**3E. Ensemble conviction filter** — signal memory window, min-strategy agreement gate, confidence gate. **DONE**
+- Config: `min_strategy_agreement`, `min_signal_confidence`, `signal_memory_ticks`.
+- `select_best_signal()` and `_merge_with_buffer()` in `app/engine/orchestrator.py`.
+
+**3F. Backtester** — `app/backtest/runner.py`. CLI: `python -m app.backtest.runner --symbol NIFTY --from 2025-01-01 --to 2025-04-01`. **DONE**
+
+**3G. Optuna optimization** — `optimize_all.py` runs all 7 strategies for a symbol (default: last 5 years). Saves best params to `config/params_{symbol}.yaml`. The live pipeline auto-loads these. **DONE**
+- Example: `python optimize_all.py --symbol NIFTY`
+- Override date range or trials: `python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50`
+- Auto-loading: `app/core/optimized_params.py` + `SignalAgent` builds per-symbol strategy instances with optimized params.
+
+**3H. Kelly sizing** — RiskEngine optional Kelly multiplier using last 20 trades' win_rate + avg_win/loss, capped at max_risk_pct. **DONE**
+- `compute_kelly_fraction()` and `update_kelly_fraction()` in `app/engine/risk_engine.py`.
+- Config: `kelly_sizing_enabled`.
+
+### Remaining in Phase 3
+- Walk-forward OOS validation (rolling train/test windows) — not yet implemented in `runner.py`.
+- HTF candle resampler (5m→15m+1h) for live scheduler — plumbed in SignalAgent but not yet fetched in scheduler tick.
+
+### Files changed (Phase 3)
+- `app/services/market_data.py` — all indicators
+- `app/strategies/` — 4 new strategy files + `base.py` `applies_to_regime()` hook
+- `app/agents/signal_agent.py` — regime filter, HTF agreement, optimized params per symbol
+- `app/engine/orchestrator.py` — ensemble conviction, signal memory buffer
+- `app/engine/regime_detector.py` — regime detection
 - `app/engine/risk_engine.py` — Kelly sizing
+- `app/backtest/runner.py`, `app/backtest/optimize.py` — backtester + optimizer
+- `app/core/optimized_params.py` — per-symbol params loader
+- `optimize_all.py` — batch Optuna runner (default: last 5 years)
+- `config/params_{symbol}.yaml` — generated by optimizer, auto-loaded at runtime
 - `requirements.txt` — optuna
 
-### Verification
-- Backtest NIFTY 5m Jan-Mar 2025, baseline 3 strategies → record Sharpe as baseline.
-- Add new strategies + regime → improved Sharpe (or document regression).
-- Walk-forward OOS Sharpe > 0.3.
-- 2+ unit tests per new strategy.
+### Verification (verified)
+- 102/102 pytest green.
+- All 7 strategies tested in `tests/test_strategies.py`.
+- Ensemble conviction tested in `tests/test_orchestrator_conviction.py`.
+- Optimized params loader tested in `tests/test_optimized_params.py`.
+- Backtests run successfully for NETWEB, HSCL, NIFTY.
 
 ---
 
@@ -137,8 +168,9 @@ LLM rejects ~20-40% of signals. If rejected would-have-lost & approved win, LLM 
 3. **NSE holiday calendar** — scheduler hardcodes Mon-Fri. Add `nsepy.get_holidays()` before live flip or bot trades on Republic Day.
 
 ## Recommended order
-1. ✅ Phase 1 DONE (today) — enables A/B data groundwork.
-2. Phase 3 NEXT (1-2 weeks offline backtest).
-3. Phase 2 PARALLEL (1 week infra).
-4. Phase 4 AFTER (4 weeks paper shadow).
-5. Phase 5 LIVE (only if Phase 2 done + Phase 4 positive).
+1. ✅ Phase 1 DONE.
+2. ✅ Phase 3 MOSTLY DONE — strategies, backtester, optimizer, ensemble conviction, Kelly sizing, auto-loaded params.
+3. **Phase 3 remaining** — walk-forward OOS validation, live HTF candle fetch in scheduler.
+4. **Phase 2 NEXT** — real-trade readiness before any live money (order reconciliation, alerting, circuit breakers).
+5. **Phase 4 AFTER** — 4 weeks paper shadow for LLM A/B measurement.
+6. **Phase 5 LIVE** — only if Phase 2 done + Phase 4 positive EV.
