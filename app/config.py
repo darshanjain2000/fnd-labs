@@ -82,8 +82,25 @@ class Settings(BaseSettings):
     """Comma-separated SYMBOL:EXCHANGE pairs the runner polls each tick."""
     run_interval_sec: int = 60
     """How often (seconds) to fetch a fresh candle batch per symbol during market hours."""
-    run_candle_interval: str = "5m"
+    run_candle_interval: str = "1m"
     """Candle interval fed to strategies (1m, 3m, 5m, 15m, 30m, 1h)."""
+    fetch_stagger_ms: int = 350
+    """Milliseconds to wait between starting each parallel candle fetch.
+
+    Angel One enforces a per-second request cap. Staggering avoids sending all
+    watchlist requests simultaneously and triggering 'Access denied / rate exceeded'.
+    With 8 symbols and 350ms: last request starts at 2.45s, well within the 60s tick.
+    Set to 0 to disable staggering (not recommended for watchlists > 3 symbols).
+    Read from FETCH_STAGGER_MS in .env.
+    """
+    fetch_max_concurrent: int = 3
+    """Maximum number of candle fetch requests to Angel One that may run at the same time.
+
+    Acts as a hard concurrency cap (asyncio.Semaphore) — even if stagger fires all
+    coroutines, only this many will be in-flight to Angel simultaneously.
+    Keeps the request rate well within Angel One's API rate limits.
+    Read from FETCH_MAX_CONCURRENT in .env.
+    """
     market_open: str = "09:15"
     """Market open time (IST, 24h HH:MM)."""
     market_close: str = "15:30"

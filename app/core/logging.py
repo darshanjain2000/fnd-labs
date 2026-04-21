@@ -17,6 +17,7 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "scheduler_outside_hours":      "-- Market CLOSED  ({now})  -- next open: {next_open}",
     "scheduler_tick_start":         ">> Tick #{tick}  running pipeline for {watchlist}",
     "scheduler_fetch_done":         "   Fetched {fetched}/{requested} symbols in {elapsed_ms}ms",
+    "scheduler_fetch_staggered":     "   Fetching {symbols} symbols with {stagger_ms}ms stagger (rate-limit guard)",
     "scheduler_tick_done":          "   Tick done  symbols={symbols}  skipped={skipped}  auto-closed={closed}  total_ticks={total_ticks}",
     "scheduler_fetch_failed":       "!! Candle fetch FAILED for {symbol}: {error}",
     "scheduler_too_few_candles":    "!! Only {rows} candles for {symbol} -- skipping",
@@ -30,7 +31,7 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "scrip_master_loaded_from_cache": "   Scrip master loaded from cache ({rows} rows)",
     "angel_session_started":        "   Logged into Angel as {client}",
     "angel_token_resolved_local":   "   Resolved {symbol} -> token {token} (scrip={matched})",
-    "angel_candles_fetched":        "   Fetched {rows} {interval} candles for token {token}",
+    "angel_candles_fetched":        "   Fetched {rows} {interval} candles for {symbol} (token={token})",
     # Pipeline stages
     "pipeline_stage_signals":       "   [{symbol}] {count} signal(s) from strategies",
     # LLM

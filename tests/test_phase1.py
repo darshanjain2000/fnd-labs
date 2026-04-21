@@ -79,6 +79,9 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
         })
 
     class _FakeSession:
+        def ensure_ready(self) -> None:
+            pass  # no-op — session is always "ready" in tests
+
         def fetch_candles_for_symbol(self, sym, exch, interval, start, end):
             time.sleep(0.3)  # simulated IO latency
             return _fake_df()
@@ -94,6 +97,8 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
     from app.config import get_settings
     settings = get_settings()
     monkeypatch.setattr(settings, "watchlist", "A:NSE,B:NSE,C:NSE,D:NSE", raising=False)
+    # Disable stagger so this test measures raw parallelism, not stagger delay.
+    monkeypatch.setattr(settings, "fetch_stagger_ms", 0, raising=False)
 
     # Stub orchestrator so the tick doesn't touch DB/broker.
     class _StubRiskStats:

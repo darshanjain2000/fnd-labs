@@ -2,32 +2,39 @@ fastapi>=0.115
 uvicorn[standard]>=0.32
 pydantic>=2.9
 pydantic-settings>=2.5
+python-dotenv>=1.0
+httpx>=0.27
 
-# Broker
-kiteconnect>=5.0
+# Broker — Angel One (required for BROKER=angel)
+smartapi-python>=1.5.5
+pyotp>=2.9
+websocket-client>=1.9
+requests>=2.28
+
+# Broker — Kite (optional, required for BROKER=kite)
+# kiteconnect>=5.0
 
 # Data / indicators
 pandas>=2.2
 numpy>=1.26
-pandas-ta>=0.3.14b
+# pandas-ta>=0.3.14b  # optional: technical indicators (Phase 2)
 
 # Persistence
 sqlalchemy>=2.0
-alembic>=1.13
+# alembic>=1.13  # optional: migrations (Phase 2+, use _SQLITE_ADDITIONS until then)
 
 # Scheduling / async
-apscheduler>=3.10
-httpx>=0.27
+# apscheduler>=3.10  # optional: Phase 2 advanced scheduling
 
 # Logging
 structlog>=24.1
 
-# RAG
-chromadb>=0.5
-sentence-transformers>=3.0
+# RAG (optional, required for MEMORY_SOURCE=rag)
+# chromadb>=0.5
+# sentence-transformers>=3.0
 
-# Backtesting
-vectorbt>=0.26
+# Backtesting (optional, Phase 3)
+# vectorbt>=0.26
 
 # Dev / test
 pytest>=8.0

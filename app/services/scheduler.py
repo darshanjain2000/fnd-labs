@@ -201,25 +201,44 @@ class MarketScheduler:
         latest_prices: dict[str, float] = {}
         candle_dfs: dict[str, tuple[str, object]] = {}  # symbol -> (exchange, df)
 
-        # Parallel candle fetch — one bad symbol shouldn't kill the tick.
-        fetch_started = datetime.now(IST)
+        # Pre-warm the Angel session in a single thread before parallel fetch.
+        # This ensures all parallel candle requests start from an already-logged-in
+        # session, preventing a login race where all threads fire simultaneously.
+        await asyncio.to_thread(session.ensure_ready)
 
-        async def _fetch_one(sym: str, exch: str):
-            try:
-                df = await asyncio.to_thread(
-                    session.fetch_candles_for_symbol,
-                    sym,
-                    exch,
-                    s.run_candle_interval,
-                    None,
-                    None,
-                )
-                return sym, exch, df, None
-            except Exception as e:
-                return sym, exch, None, e
+        # Parallel candle fetch — staggered + concurrency-capped to avoid Angel One rate limiting.
+        # Stagger spreads request start times; semaphore ensures at most fetch_max_concurrent
+        # requests are in-flight at any moment, regardless of stagger timing.
+        fetch_started = datetime.now(IST)
+        stagger_sec = s.fetch_stagger_ms / 1000.0
+        sem = asyncio.Semaphore(s.fetch_max_concurrent)
+        if stagger_sec > 0:
+            log.debug(
+                "scheduler_fetch_staggered",
+                symbols=len(pairs),
+                stagger_ms=s.fetch_stagger_ms,
+            )
+
+        async def _fetch_one(sym: str, exch: str, index: int) -> tuple:
+            """Fetch candles for one symbol with stagger delay and concurrency cap."""
+            if stagger_sec > 0 and index > 0:
+                await asyncio.sleep(index * stagger_sec)
+            async with sem:
+                try:
+                    df = await asyncio.to_thread(
+                        session.fetch_candles_for_symbol,
+                        sym,
+                        exch,
+                        s.run_candle_interval,
+                        None,
+                        None,
+                    )
+                    return sym, exch, df, None
+                except Exception as e:
+                    return sym, exch, None, e
 
         results = await asyncio.gather(
-            *[_fetch_one(sym, exch) for sym, exch in pairs],
+            *[_fetch_one(sym, exch, i) for i, (sym, exch) in enumerate(pairs)],
             return_exceptions=False,
         )
         for sym, exch, df, err in results:

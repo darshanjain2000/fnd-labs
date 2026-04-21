@@ -18,6 +18,7 @@ Intervals accepted by Angel
 """
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any
@@ -47,64 +48,79 @@ class AngelSession:
     def __init__(self) -> None:
         self._api: Any | None = None
         self._token_cache: dict[str, str] = {}
+        self._login_lock = threading.Lock()  # prevents concurrent login races
 
     # ---- login -----------------------------------------------------------
     def _ensure_logged_in(self) -> Any:
+        # Fast path — already logged in (no lock needed for reads after init).
         if self._api is not None:
             return self._api
-        s = get_settings()
-        # Defensive strip — .env values often have trailing spaces
-        api_key = (s.angel_api_key or "").strip()
-        client  = (s.angel_client_code or "").strip()
-        pin     = (s.angel_pin or "").strip()
-        secret  = (s.angel_totp_secret or "").strip().replace(" ", "").upper()
+        # Slow path — acquire lock so only one thread does the login.
+        with self._login_lock:
+            if self._api is not None:
+                return self._api  # another thread won the race — reuse its session
+            s = get_settings()
+            # Defensive strip — .env values often have trailing spaces
+            api_key = (s.angel_api_key or "").strip()
+            client  = (s.angel_client_code or "").strip()
+            pin     = (s.angel_pin or "").strip()
+            secret  = (s.angel_totp_secret or "").strip().replace(" ", "").upper()
 
-        missing = [k for k, v in {
-            "ANGEL_API_KEY": api_key,
-            "ANGEL_CLIENT_CODE": client,
-            "ANGEL_PIN": pin,
-            "ANGEL_TOTP_SECRET": secret,
-        }.items() if not v]
-        if missing:
-            raise RuntimeError(
-                f"Angel credentials not set — add to .env: {', '.join(missing)}"
-            )
-        try:
-            import pyotp  # type: ignore
-            from SmartApi import SmartConnect  # type: ignore
-        except ImportError as e:  # pragma: no cover
-            raise RuntimeError("pip install smartapi-python pyotp") from e
-
-        try:
-            totp = pyotp.TOTP(secret).now()
-        except Exception as e:
-            raise RuntimeError(
-                f"ANGEL_TOTP_SECRET is not a valid base32 string. "
-                f"You must paste the SECRET from smartapi.angelone.in/enable-totp "
-                f"(looks like 'JBSWY3DPEHPK3PXP...'), NOT the 6-digit code. ({e})"
-            ) from e
-
-        api = SmartConnect(api_key=api_key)
-        session = api.generateSession(client, pin, totp)
-        if not session.get("status"):
-            msg = session.get("message", session)
-            hint = ""
-            if "totp" in str(msg).lower() or session.get("errorcode") == "AB1050":
-                hint = (
-                    " — HINT: This usually means (a) ANGEL_TOTP_SECRET doesn't match "
-                    "the currently-enrolled secret on smartapi.angelone.in/enable-totp "
-                    "(re-enroll and copy the NEW secret), (b) system clock is skewed, "
-                    "or (c) client code / PIN is wrong."
+            missing = [k for k, v in {
+                "ANGEL_API_KEY": api_key,
+                "ANGEL_CLIENT_CODE": client,
+                "ANGEL_PIN": pin,
+                "ANGEL_TOTP_SECRET": secret,
+            }.items() if not v]
+            if missing:
+                raise RuntimeError(
+                    f"Angel credentials not set — add to .env: {', '.join(missing)}"
                 )
-            raise RuntimeError(f"Angel login failed: {msg}{hint}")
-        self._api = api
-        log.info("angel_session_started", client=client)
-        return self._api
+            try:
+                import pyotp  # type: ignore
+                from SmartApi import SmartConnect  # type: ignore
+            except ImportError as e:  # pragma: no cover
+                raise RuntimeError("pip install smartapi-python pyotp") from e
+
+            try:
+                totp = pyotp.TOTP(secret).now()
+            except Exception as e:
+                raise RuntimeError(
+                    f"ANGEL_TOTP_SECRET is not a valid base32 string. "
+                    f"You must paste the SECRET from smartapi.angelone.in/enable-totp "
+                    f"(looks like 'JBSWY3DPEHPK3PXP...'), NOT the 6-digit code. ({e})"
+                ) from e
+
+            api = SmartConnect(api_key=api_key)
+            session = api.generateSession(client, pin, totp)
+            if not session.get("status"):
+                msg = session.get("message", session)
+                hint = ""
+                if "totp" in str(msg).lower() or session.get("errorcode") == "AB1050":
+                    hint = (
+                        " — HINT: This usually means (a) ANGEL_TOTP_SECRET doesn't match "
+                        "the currently-enrolled secret on smartapi.angelone.in/enable-totp "
+                        "(re-enroll and copy the NEW secret), (b) system clock is skewed, "
+                        "or (c) client code / PIN is wrong."
+                    )
+                raise RuntimeError(f"Angel login failed: {msg}{hint}")
+            self._api = api
+            log.info("angel_session_started", client=client)
+            return self._api
 
     def reset(self) -> None:
         """Force re-login on next call (call after credentials change)."""
         self._api = None
         self._token_cache.clear()
+
+    def ensure_ready(self) -> None:
+        """Pre-warm the session so subsequent candle fetches skip login overhead.
+
+        Call this once in the main thread (or a single thread) before launching
+        parallel candle fetches. Ensures only one login attempt is made and all
+        parallel requests start from an already-authenticated session.
+        """
+        self._ensure_logged_in()
 
     # ---- token resolution ------------------------------------------------
     # Angel's public scrip master (no auth; refreshed daily by Angel)
@@ -211,6 +227,7 @@ class AngelSession:
         interval: str,
         from_dt: datetime,
         to_dt: datetime,
+        symbol: str = "",
     ) -> pd.DataFrame:
         """Return a DataFrame with columns: datetime, open, high, low, close, volume."""
         api = self._ensure_logged_in()
@@ -231,11 +248,10 @@ class AngelSession:
         df = df.sort_values("datetime").reset_index(drop=True)
         log.info(
             "angel_candles_fetched",
+            symbol=symbol or symboltoken,
             token=symboltoken,
             interval=angel_interval,
             rows=len(df),
-            from_dt=str(from_dt),
-            to_dt=str(to_dt),
         )
         return df
 
@@ -258,7 +274,7 @@ class AngelSession:
                 "15m": 20, "30m": 30, "1h": 45, "1d": 180,
             }.get(interval, 10)
             from_dt = to_dt - timedelta(days=calendar_days)
-        return self.candles(exchange, token, interval, from_dt, to_dt)
+        return self.candles(exchange, token, interval, from_dt, to_dt, symbol=symbol)
 
 
 # ---- module-level singleton -----------------------------------------------
