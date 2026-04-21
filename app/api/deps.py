@@ -46,11 +46,19 @@ def _build_broker(s: Settings) -> Broker:
 
 
 def _build_signal_agent(s: Settings) -> SignalAgent:
+    """Build a SignalAgent with only the strategies named in settings.
+
+    Args:
+        s: Current application settings.
+
+    Returns:
+        Configured SignalAgent instance.
+    """
     selected = set(s.strategy_list())
-    strategies = [cls() for cls in ALL_STRATEGIES if cls().name in selected]
+    strategies = [cls() for cls in ALL_STRATEGIES if cls.name in selected]
     if not strategies:
         log.warning("no_strategies_enabled")
-    return SignalAgent(strategies=strategies)
+    return SignalAgent(strategies=strategies, settings=s)
 
 
 # ---- Cached singletons --------------------------------------------------

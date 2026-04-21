@@ -11,6 +11,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env   # then fill in keys
 ```
 
+
 ## Run
 
 ```powershell
@@ -25,6 +26,30 @@ Endpoints:
 - `GET  /positions`       — in-memory risk stats
 - `POST /killswitch/on`   — halt new orders
 - `GET  /docs`            — Swagger UI
+
+## Backtesting
+
+Run a backtest for a single strategy and symbol:
+
+```powershell
+python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
+```
+
+## Hyperparameter Optimization (Optuna)
+
+Run Optuna optimization for all 7 strategies on a symbol (default: last 5 years):
+
+```powershell
+python optimize_all.py --symbol NIFTY
+```
+
+This will create `config/params_nifty.yaml` with the best parameters for each strategy. The live trading pipeline will automatically use these params for that symbol.
+
+To override the date range or number of trials:
+
+```powershell
+python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50
+```
 
 ## Test
 

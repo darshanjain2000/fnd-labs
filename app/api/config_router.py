@@ -21,6 +21,9 @@ _EDITABLE_FIELDS = {
     "capital_inr", "max_risk_per_trade_pct", "max_daily_loss_pct",
     "max_open_positions", "max_trades_per_day",
     "kill_switch", "block_expiry_last_hours",
+    "regime_filter_enabled", "require_htf_agreement", "kelly_sizing_enabled",
+    "min_strategy_agreement", "min_signal_confidence",
+    "signal_memory_ticks",
 }
 
 
@@ -48,6 +51,12 @@ class ConfigPatch(BaseModel):
     max_trades_per_day: int | None = None
     kill_switch: bool | None = None
     block_expiry_last_hours: int | None = None
+    regime_filter_enabled: bool | None = None
+    require_htf_agreement: bool | None = None
+    kelly_sizing_enabled: bool | None = None
+    min_strategy_agreement: int | None = None
+    min_signal_confidence: float | None = None
+    signal_memory_ticks: int | None = None
 
 
 def _safe_view() -> dict:

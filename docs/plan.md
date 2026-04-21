@@ -67,11 +67,11 @@ Next work splits into **4 phases**:
 
 ### Steps
 **3A. Indicators** — add MACD, Bollinger, ADX, Supertrend, OBV, Stochastic to `compute_indicators`. Add HTF resampler (5m→15m+1h).
-**3B. New strategies** — `supertrend.py`, `macd_divergence.py`, `bollinger_squeeze.py`, `orb_breakout.py` (opening-range).
-**3C. Regime-aware routing** — wire `regime_detector` into `SignalAgent`. Per-strategy regime weights in config (rsi=range-only, ema=trend-only, etc.).
-**3D. Multi-timeframe confirm** — `require_htf_agreement` flag; EMA direction on 15m must match signal side.
-**3E. Backtester** — `app/backtest/runner.py` using vectorbt. CLI: `python -m app.backtest.runner --symbol NIFTY --from 2025-01-01 --to 2025-04-01`. Walk-forward mode with rolling train/test windows.
-**3F. Optuna optimization** — `app/backtest/optimize.py` searches atr_mult, RSI thresholds, etc. Objective = Sortino on OOS test. Saves best params to `config/optimized_params.yaml`.
+
+**3E. Backtester** — `app/backtest/runner.py` using vectorbt. CLI: `python -m app.backtest.runner --symbol NIFTY --from 2025-01-01 --to 2025-04-01`. Walk-forward mode with rolling train/test windows. **DONE**
+**3F. Optuna optimization** — `optimize_all.py` runs all 7 strategies for a symbol (default: last 5 years). Saves best params to `config/params_{symbol}.yaml` (lowercase symbol). The live pipeline will auto-load these for that symbol. **DONE**
+	- Example: `python optimize_all.py --symbol NIFTY`
+	- To override date range or trials: `python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50`
 **3G. Kelly sizing** — RiskEngine optional Kelly multiplier using last 20 trades' win_rate + avg_win/loss, capped at max_risk_pct.
 
 ### Relevant files

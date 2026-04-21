@@ -45,6 +45,28 @@ _EVENT_FRIENDLY: dict[str, str] = {
     # Strategy / AI / risk
     "signal_rejected_by_ai":        "   [X] AI rejected  {symbol} {strategy} {side} conf={confidence:.2f}  --  {reasoning}",
     "signal_rejected_by_risk":      "   [X] Risk rejected  {symbol} {strategy} {side}  --  {reason}",
+    # Phase 3: regime + HTF filtering
+    "regime_detected":              "   [R] Regime  {symbol} -> {regime}",
+    "strategy_skipped_regime":      "   [-] Skipped {strategy} (regime={regime}, symbol={symbol})",
+    "signal_rejected_htf":          "   [X] HTF rejected  {symbol} {strategy} {side} (HTF EMA disagrees)",
+    "kelly_fraction_updated":       "   [K] Kelly fraction -> {fraction:.2f}",
+    # Backtester
+    "backtest_started":             ">> Backtest started  {strategy}  {symbol}  {from_date} -> {to_date}",
+    "backtest_done":                "   Backtest done  trades={trades}  pnl={pnl:.2f}  sharpe={sharpe:.3f}  win_rate={win_rate:.1%}",
+    # Ensemble conviction
+    "signal_dropped_low_confidence": "   [-] Dropped {symbol} {strategy} {side} (conf={confidence:.2f} < {threshold:.2f})",
+    "ensemble_insufficient":        "   [X] No conviction  {symbol}  sides={side_counts}  need={required}",
+    "ensemble_selected":            "   [*] Conviction  {symbol} {side}  {agreement}/{total} strategies  best={strategy} conf={confidence:.2f}",
+    "signal_memory_merged":         "   [M] Signal memory  {symbol}  {current} new + buffer -> {buffered} merged (window={window})",
+    "backtest_fetching_data":       ">> Fetching {symbol} candles from Angel  {exchange} {interval}  {from_date} -> {to_date}",
+    # Optuna optimizer
+    "optimize_fetching_real_data":  ">> Optimizer fetching {symbol} candles  {interval}  {from_date} -> {to_date}",
+    "optimize_using_synthetic_data": "   Optimizer using synthetic data (no --symbol/--from/--to)",
+    # Optimized params
+    "optimized_params_loaded":      "   [P] Optimized params loaded for {symbol}  strategies={strategies}",
+    "optimized_params_load_failed": "!! Optimized params load FAILED for {symbol}: {error}",
+    "strategy_loaded_optimized_params": "   [P] {symbol} {strategy} using optimized params: {params}",
+    "strategy_optimized_params_invalid": "!! {symbol} {strategy} optimized params invalid ({error}) -- using defaults",
     # Execution
     "paper_order_filled":           "   [$] Paper fill  {side} {qty} {symbol} @ {price}  ({tag})",
     "execution_done":               "   [+] TRADE OPENED  id={trade_id} {side} {qty} {symbol} @ {fill}  ordId={order_id}",
