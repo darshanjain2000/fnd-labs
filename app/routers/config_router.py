@@ -1,11 +1,13 @@
-"""View & mutate runtime config. All toggles live in Settings; this exposes them."""
+"""View & mutate runtime config. All toggles live in :class:`Settings`."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.api.deps import reset_cached_singletons
 from app.config import get_settings, reload_settings
+from app.exceptions.domain import InvalidRequestException
+from app.models.api import ApiResponse, ConfigPatchOut, ConfigReloadOut
+from app.routers.deps import reset_cached_singletons
 from app.services.angel_session import reset_angel_session
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -28,7 +30,8 @@ _EDITABLE_FIELDS = {
 
 
 class ConfigPatch(BaseModel):
-    # Every field is optional — send only what you want to change.
+    """Partial update body for ``PATCH /config`` — only supplied fields change."""
+
     model_config = {"extra": "forbid"}
 
     mode: str | None = None
@@ -60,39 +63,51 @@ class ConfigPatch(BaseModel):
 
 
 def _safe_view() -> dict:
+    """Return ``Settings`` as a dict with secret fields masked."""
     s = get_settings()
     data = s.model_dump()
-    # Mask secrets.
-    for k in ("openrouter_api_key", "kite_api_secret", "kite_access_token", "angel_api_secret", "angel_pin", "angel_totp_secret"):
+    for k in (
+        "openrouter_api_key",
+        "kite_api_secret",
+        "kite_access_token",
+        "angel_api_secret",
+        "angel_pin",
+        "angel_totp_secret",
+    ):
         if data.get(k):
             data[k] = "***set***"
     data["is_live_effective"] = s.is_live()
     return data
 
 
-@router.get("")
-def view_config() -> dict:
-    return _safe_view()
+@router.get("", response_model=ApiResponse[dict])
+def view_config() -> ApiResponse[dict]:
+    """Return the live Settings snapshot with secret fields masked."""
+    return ApiResponse[dict].ok(_safe_view())
 
 
-@router.patch("")
-def patch_config(patch: ConfigPatch) -> dict:
-    """Apply in-memory config changes (does NOT write .env). Cleared singletons reload next call."""
+@router.patch("", response_model=ApiResponse[ConfigPatchOut])
+def patch_config(patch: ConfigPatch) -> ApiResponse[ConfigPatchOut]:
+    """Apply in-memory config changes (does NOT write .env)."""
     s = get_settings()
     changes: dict = {}
     for k, v in patch.model_dump(exclude_none=True).items():
         if k not in _EDITABLE_FIELDS:
-            raise HTTPException(400, f"field '{k}' not editable at runtime")
+            raise InvalidRequestException(f"field '{k}' not editable at runtime")
         setattr(s, k, v)
         changes[k] = v
     reset_cached_singletons()
-    return {"applied": changes, "config": _safe_view()}
+    return ApiResponse[ConfigPatchOut].ok(
+        ConfigPatchOut(applied=changes, config=_safe_view())
+    )
 
 
-@router.post("/reload")
-def reload_from_env() -> dict:
+@router.post("/reload", response_model=ApiResponse[ConfigReloadOut])
+def reload_from_env() -> ApiResponse[ConfigReloadOut]:
     """Re-read .env from disk and rebuild cached broker/agents."""
     reload_settings()
     reset_cached_singletons()
     reset_angel_session()
-    return {"reloaded": True, "config": _safe_view()}
+    return ApiResponse[ConfigReloadOut].ok(
+        ConfigReloadOut(reloaded=True, config=_safe_view())
+    )

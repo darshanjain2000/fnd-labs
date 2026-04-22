@@ -200,6 +200,9 @@ class AngelSession:
                           symbol=tradingsymbol, token=token, matched=hit.get("symbol"))
                 return token
         except Exception as e:
+            # Broad catch: scrip-master parsing can fail in many ways (pandas dtype
+            # errors, malformed CSV, encoding issues). Any failure should fall
+            # through to the live-API fallback below, not crash the caller.
             log.warning("scrip_master_lookup_failed", error=str(e))
 
         # Fallback path: live searchScrip API (may be blocked for dormant accounts)

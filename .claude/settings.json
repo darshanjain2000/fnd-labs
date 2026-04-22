@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m ruff format tests/conftest.py tests/test_risk_engine.py tests/test_orchestrator_conviction.py tests/test_orchestrator_persistence.py tests/test_phase1.py)",
+      "Bash(python -m pytest tests/test_exceptions.py tests/test_api_response.py -v)"
+    ]
+  }
+}

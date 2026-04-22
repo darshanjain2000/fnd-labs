@@ -30,7 +30,7 @@ import pandas as pd
 from app.core.logging import get_logger
 from app.engine.risk_engine import position_size
 from app.services.market_data import compute_indicators
-from app.strategies.base import Signal, Strategy
+from app.strategies.base import Strategy
 
 log = get_logger(__name__)
 
@@ -127,7 +127,6 @@ def _compute_metrics(
     win_rate = wins / len(pnls)
 
     # Build daily equity curve
-    n_days = max(1, (df.index[-1] - df.index[0]).days if isinstance(df.index, pd.DatetimeIndex) else 252)
     cumulative = np.cumsum(pnls)
     equity = capital + cumulative
 
@@ -395,7 +394,6 @@ def walk_forward(
 
     window_start = start
     while window_start + test_bars <= n:
-        test_df = df.iloc[window_start: window_start + test_bars]
         # Prepend warm-up bars from the training window so indicators are valid
         warmup_start = max(0, window_start - _WARMUP_BARS)
         eval_df = df.iloc[warmup_start: window_start + test_bars]
@@ -554,7 +552,11 @@ def _main() -> None:
         else [cls(**custom_params) for cls in ALL_STRATEGIES if cls.name == args.strategy]
     )
     if not strategies:
-        print(f"No strategy named '{args.strategy}'. Available: {[c.name for c in ALL_STRATEGIES]}")
+        log.error(
+            "backtest_strategy_not_found",
+            requested=args.strategy,
+            available=[c.name for c in ALL_STRATEGIES],
+        )
         return
 
     log.info(
@@ -579,7 +581,7 @@ def _main() -> None:
         )
 
     for r in results:
-        print(r.summary())
+        log.info("backtest_summary", summary=r.summary())
 
 
 if __name__ == "__main__":

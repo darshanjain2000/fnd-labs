@@ -1,10 +1,8 @@
 """Tests for app.core.optimized_params — per-symbol parameter loader."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
 
 from app.core.optimized_params import load_params_for_symbol, params_file_for
 

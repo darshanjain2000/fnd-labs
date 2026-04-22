@@ -9,6 +9,7 @@ import httpx
 
 from app.config import get_settings
 from app.core.logging import get_logger
+from app.exceptions.domain import SpendCapExceededException
 
 log = get_logger(__name__)
 
@@ -20,8 +21,9 @@ _COSTS = {
 }
 
 
-class SpendCapExceeded(RuntimeError):
-    pass
+# Back-compat alias — existing code imports SpendCapExceeded from this module.
+# New code should import SpendCapExceededException from app.exceptions directly.
+SpendCapExceeded = SpendCapExceededException
 
 
 class LLMClient:
@@ -71,6 +73,10 @@ class LLMClient:
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as e:
+            # Broad catch: httpx raises several unrelated exception types
+            # (TimeoutException, ConnectError, HTTPStatusError, RemoteProtocolError).
+            # Any LLM failure degrades silently to the fallback rule — never crashes
+            # the pipeline.
             log.error("llm_call_failed", error=str(e))
             return {}
 

@@ -68,8 +68,8 @@ def test_format_context_returns_history_line_and_rows():
     mem = TradeMemory(session_factory=factory)
     lines = mem.format_context("BANKNIFTY", "ema_breakout", "BUY", k=5)
     assert lines, "expected at least one context line"
-    assert any("History[" in l for l in lines)
-    assert any("Past:" in l for l in lines)
+    assert any("History[" in line for line in lines)
+    assert any("Past:" in line for line in lines)
 
 
 def test_recent_similar_excludes_open_trades_and_other_symbols():

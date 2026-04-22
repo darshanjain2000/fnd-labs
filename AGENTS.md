@@ -7,7 +7,7 @@
 
 ## 1. What This Project Is
 
-An automated F&O trading bot that runs a 60-second loop during NSE market hours (IST Mon-Fri 09:15-15:30).
+An automated Equity trading bot that runs a 60-second loop during NSE market hours (IST Mon-Fri 09:15-15:30).
 Each tick: fetch OHLCV candles → run strategies → LLM validation → risk gate → broker execution → persist.
 All state lives in SQLite; all control is via a FastAPI HTTP API.
 
@@ -39,19 +39,16 @@ Hot-path files (read these before touching the pipeline):
 ```powershell
 # Install
 pip install -r requirements.txt
-
 # Run all tests (must stay green)
 python -m pytest -q
-
 # Start server (paper mode by default)
 uvicorn app.main:app --reload
-
 # Or run directly
 python app/main.py
 ```
 
 When adding a feature, add tests in `tests/`. Run `pytest -q` before finishing.
-Target: **all tests pass**. The baseline is 47 tests.
+Target: **all tests pass**. The baseline is 104 tests (102 passing + 2 skipped, network-gated).
 
 ---
 
@@ -78,6 +75,391 @@ Before posting any code, verify:
 ---
 
 ## 5. Code Style
+
+# Coding Style Guide
+
+General coding patterns and conventions to follow when writing code in this developer's style. Technology-agnostic unless noted.
+
+## Architecture
+
+Strict layered architecture. Never skip layers or mix concerns across them.
+
+```
+Models → Data Access → Services → Controllers → API Layer
+```
+
+| Layer | Responsibility |
+|---|---|
+| **Models** | Data shapes, validation, enums |
+| **Data Access** | DB/external queries only, no logic |
+| **Services** | All business logic, no HTTP/transport concerns |
+| **Controllers** | Thin delegation — calls services, returns results |
+| **API Layer** | HTTP binding, auth, error-to-response mapping |
+
+---
+
+## File & Directory Structure
+
+- One file per logical unit — `{entity}_{layer}.py`
+- Group by layer, not by feature
+
+```
+src/
+  models/
+  dal/
+  services/
+  controllers/
+  routers/
+  tasks/
+  utils/
+  enums/
+```
+
+---
+
+## Naming Conventions
+
+| Thing | Style | Example |
+|---|---|---|
+| Classes | PascalCase | `UserService`, `OrderRepository` |
+| Functions / methods | snake_case, verb-first | `get_user`, `build_filter_query`, `process_batch_recursively` |
+| Variables | snake_case, descriptive | `subscription_guid`, `batch_results` |
+| Booleans | `is_` / `has_` prefix | `is_deleted`, `has_access` |
+| Collections | plural | `user_ids`, `batch_results` |
+| Files | snake_case | `order_service.py`, `response_filter_helper.py` |
+| Constants / status enums | IntEnum PascalCase members | `ProcessingStatus.IN_PROGRESS` |
+
+No abbreviations unless universally understood. `guid` is fine. `sub` for subscription is not.
+
+---
+
+## Imports
+
+Order: **stdlib → third-party → local**. Blank line only before local imports.
+
+```python
+from typing import Dict, Any, Optional, List, Tuple
+from datetime import datetime
+from enum import IntEnum
+
+from pydantic import BaseModel, Field
+from fastapi import APIRouter
+
+from app_settings import AppSettings
+from models.user import User
+from utils.logger import logger
+```
+
+- Prefer `from module import Name` over `import module` then `module.Name`
+- No aliasing on local imports
+- Lazy imports inside methods only for circular imports or optional heavy dependencies
+
+---
+
+## Data Models
+
+All data structures use **Pydantic `BaseModel`**. No plain dicts or dataclasses for domain objects.
+
+```python
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Dict, Any
+
+class CreateOrderRequest(BaseModel):
+    user_id: str
+    items: List[str]
+    metadata: Optional[Dict[str, Any]] = None
+    priority: int = Field(default=1, ge=1, le=5)
+```
+
+- `Field()` for defaults, constraints, and documentation
+- `@field_validator()` for custom validation logic
+- `.model_dump()` for serialization
+- `.get()` with defaults when accessing raw dicts from external sources
+
+**Enums use `IntEnum`:**
+
+```python
+from enum import IntEnum
+
+class ProcessingStatus(IntEnum):
+    NEW = 0
+    IN_PROGRESS = 1
+    COMPLETED = 2
+    FAILED = 3
+```
+
+---
+
+## API Response Pattern
+
+Every endpoint returns a **typed generic response wrapper**. Never return raw dicts or bare models.
+
+```python
+class ApiResponse(BaseModel, Generic[T]):
+    statusCode: int
+    message: Optional[str] = None
+    result: Optional[T] = None
+    error: Optional[str] = None
+```
+
+Usage:
+
+```python
+# Success
+return ApiResponse[User](statusCode=HTTPStatus.OK, message="Fetched", result=user)
+
+# Error
+return ApiResponse[User](statusCode=CustomExceptionCodes.DataNotFound, error=str(e))
+```
+
+---
+
+## API Endpoints
+
+```python
+from fastapi import APIRouter, Query, Body, Depends
+from http import HTTPStatus
+
+router = APIRouter(prefix="/orders", tags=["Orders"])
+
+@router.get("/", response_model=ApiResponse[List[Order]], dependencies=[Depends(auth)])
+async def get_orders(
+    user_id: str = Query(..., description="The user ID"),
+) -> ApiResponse[List[Order]]:
+    try:
+        result = controller.get_orders(user_id)
+        return ApiResponse[List[Order]](statusCode=HTTPStatus.OK, result=result)
+    except DataNotFoundException as e:
+        return ApiResponse[List[Order]](statusCode=CustomExceptionCodes.DataNotFound, error=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return ApiResponse[List[Order]](statusCode=HTTPStatus.INTERNAL_SERVER_ERROR, error=str(e))
+```
+
+- Route handlers are **`async def`**; services and controllers are **sync**
+- Always use `Query(...)` / `Body(...)` with descriptions for explicit parameter documentation
+- HTTP status codes from `http.HTTPStatus`
+- Catch specific exceptions first, generic `Exception` last
+- Auth applied via `dependencies=[Depends(auth)]`
+
+---
+
+## Controllers
+
+Thin. Zero business logic. Calls services and returns results.
+
+```python
+class OrderController:
+    def __init__(self):
+        self.service = OrderService()
+
+    def get_orders(self, user_id: str) -> List[Order]:
+        return self.service.get_orders_for_user(user_id)
+```
+
+Always sync — no `async def`.
+
+---
+
+## Services
+
+All business logic lives here. Always sync. No HTTP or transport concerns.
+
+```python
+class OrderService:
+    def __init__(self):
+        self.order_dal = OrderDAL()
+
+    def get_orders_for_user(self, user_id: str) -> List[Order]:
+        logger.set_context(user_id=user_id)
+        logger.info("Fetching orders")
+        orders = self.order_dal.find_by_user(user_id)
+        if not orders:
+            raise DataNotFoundException(f"No orders found for user {user_id}")
+        return orders
+```
+
+- Set logger context with relevant IDs at the start of every public method
+- Raise custom exceptions on failure — **never return `None`** to signal failure
+- Do not catch exceptions unless you can meaningfully recover; let them propagate
+
+---
+
+## Data Access Layer
+
+Queries only. No business logic. Always deserialize raw results into Pydantic models before returning.
+
+```python
+class OrderDAL(BaseRepository):
+    def __init__(self):
+        super().__init__()
+        self.collection = get_db_connection()["orders"]
+
+    def find_by_user(self, user_id: str) -> Optional[List[Order]]:
+        docs = self.filter({"userId": user_id})
+        if not docs:
+            return None
+        return [Order(**doc) for doc in docs]
+```
+
+- Use `.get(key, default)` for raw dict access
+- Never let raw DB documents leak out of this layer
+
+---
+
+## Error Handling
+
+Define custom exceptions with integer error codes via `IntEnum`:
+
+```python
+from enum import IntEnum
+
+class CustomExceptionCodes(IntEnum):
+    DataNotFound = 601
+    InvalidRequest = 602
+    ProcessingFailed = 603
+
+class DataNotFoundException(Exception):
+    def __init__(self, message="Data not found", error_code=CustomExceptionCodes.DataNotFound.value):
+        super().__init__(message)
+        self.error_code = error_code
+```
+
+Rules:
+- **Services**: raise, don't catch (unless recovery is possible)
+- **Routers**: catch specific → catch generic, map all to `ApiResponse`
+- **Background tasks**: catch everything, return status dict — never raise
+- Never `except: pass` or bare `except`
+- Always log before re-raising or returning error responses
+
+---
+
+## Logging
+
+Use the project's context-aware logger. Never use `print()` or raw `logging` directly.
+
+```python
+from utils.logger import logger
+
+# Set request-scoped context once at method entry
+logger.set_context(user_id=user_id, order_id=order_id)
+
+logger.info("Processing order")
+logger.warning("Retrying after transient failure")
+logger.error(f"Failed to reach payment service: {str(e)}")
+logger.exception(f"Unexpected error: {str(e)}")  # includes stack trace
+```
+
+- Context format: `[key=value][key2=value2] message`
+- Always include `str(e)` in error/exception messages
+- Use f-strings for all log messages
+
+---
+
+## Configuration
+
+Use a **singleton settings class** loaded from environment-specific config files. Never hardcode values.
+
+```python
+# Pattern
+class AppSettings:
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not AppSettings._initialized:
+            self._load()
+            AppSettings._initialized = True
+```
+
+- Config files per environment: `dev.json`, `uat.json`, `prod.json`
+- Group settings by domain: `settings.database`, `settings.cache`, `settings.external_api`
+- Use `@property` for lazy initialization of clients/connections
+- **Never hardcode**: URLs, API keys, DB names, timeouts, magic strings
+
+---
+
+## Batch Processing
+
+For large datasets: paginate, process in batches, consolidate results.
+
+```python
+batch_size = 500
+total_pages = (total_count + batch_size - 1) // batch_size  # ceiling division
+
+results = []
+for page in range(1, total_pages + 1):
+    batch = dal.get_page(query, page=page, page_size=batch_size)
+    results.append(process_batch(batch))
+
+final = consolidate(results)
+```
+
+---
+
+## Parsing Structured Data from Unstructured Text
+
+When extracting structured data (JSON) from free-form text (e.g., LLM output), always use regex extraction before parsing, and handle failures with fallbacks:
+
+```python
+import re, json
+
+match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+if match:
+    data = json.loads(match.group())
+else:
+    data = default_value
+```
+
+---
+
+## Type Annotations
+
+Every public method has full annotations including return type:
+
+```python
+def get_orders(
+    self,
+    user_id: str,
+    status: Optional[ProcessingStatus] = None,
+) -> List[Order]:
+```
+
+Use `typing` module: `Dict[str, Any]`, `List[str]`, `Optional[str]`, `Tuple[A, B]`.
+
+---
+
+## Code Style
+
+- 4-space indentation
+- F-strings for all string interpolation — no `%` formatting or `.format()`
+- `is None` / `is not None` — never `== None`
+- `if value:` for truthiness checks
+- `.get(key, default)` for dict access
+- Blank lines between class methods
+- Inline comments only when the *why* is non-obvious — never explain *what*
+
+---
+
+## What to Avoid
+
+- `except: pass` or catching `Exception` without logging
+- Hardcoded config values anywhere in code
+- Plain dicts for domain objects — use Pydantic models
+- `print()` for any output — use the logger
+- `async def` in service or data access layers — async only at the API boundary
+- Magic numbers or magic strings — use enums and named constants
+- Returning `None` from services to signal failure — raise a typed exception
+- Global mutable state
+- String concatenation for building queries, prompts, or structured content
+- Broad try/except blocks — keep try blocks as narrow as possible
+
+
 
 ### Python Patterns Used Here
 
@@ -235,7 +617,7 @@ No single-letter names (except `i`, `j` in loops). No abbreviations except `url`
 
 - **One test file per source module**: `app/payments.py` → `tests/test_payments.py`.
 - **Shared fixtures in `tests/conftest.py` only** — never duplicated across files.
-- `pytest -q` must stay green after every change. Baseline: 47 tests.
+- `pytest -q` must stay green after every change. Baseline: 104 tests (102 passing + 2 skipped, network-gated).
 
 ### What to Write
 

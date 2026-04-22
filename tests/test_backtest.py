@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from app.backtest.runner import BacktestResult, TradeRecord, run_backtest, walk_forward
 from app.engine.risk_engine import RiskEngine, compute_kelly_fraction

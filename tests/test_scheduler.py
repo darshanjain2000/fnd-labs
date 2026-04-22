@@ -1,11 +1,10 @@
 """Scheduler: unit tests that don't hit the network or Angel SDK."""
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
-from unittest.mock import MagicMock, call, patch
+from datetime import date, datetime, timedelta
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
-import pytest
 
 from app.services.scheduler import MarketScheduler
 
@@ -40,7 +39,7 @@ def test_past_square_off():
 
 def test_report_day_window_boundary():
     """IST day 00:00-23:59 converts to a non-empty UTC window."""
-    from app.api.runner import _ist_day_window
+    from app.routers.report_router import _ist_day_window
     start, end = _ist_day_window(date(2026, 4, 20))
     # 00:00 IST = 18:30 UTC previous day
     assert start.hour == 18 and start.minute == 30

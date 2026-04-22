@@ -10,7 +10,7 @@ Phase 3 changes:
 """
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -28,7 +28,6 @@ from app.engine.regime_detector import detect_regime
 from app.engine.risk_engine import RiskEngine
 from app.memory.trade_memory import TradeMemory
 from app.models.trade import Signal as SignalRow
-from app.models.trade import Trade as TradeRow
 from app.rag.store import RAGStore
 from app.services.broker.base import Broker
 from app.strategies.base import Signal
@@ -192,6 +191,8 @@ class Orchestrator:
         self.memory = memory or TradeMemory(session_factory=session_factory)
         self.lot_size = lot_size
         self._session_factory = session_factory
+        from app.dal.trade_dal import TradeDAL
+        self._trade_dal = TradeDAL(session_factory=session_factory)
         # Signal memory: per-symbol deque of (tick_id, Signal) tuples
         self._signal_buffer: dict[str, deque[tuple[int, Signal]]] = {}
         self._tick_counter: int = 0
@@ -395,8 +396,7 @@ class Orchestrator:
         result = self.execution_agent.execute(sig, risk.qty, signal_row_id=signal_id)
         self.risk.record_trade_open()
 
-        with self._session_factory() as session:
-            trade_id = session.query(TradeRow.id).filter(TradeRow.broker_order_id == result.order_id).scalar()
+        trade_id = self._trade_dal.find_by_broker_order_id(result.order_id)
 
         return PipelineOutcome(
             signal=sig_dict, signal_id=signal_id,

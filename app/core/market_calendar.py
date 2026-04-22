@@ -1,4 +1,6 @@
 """NSE market calendar helpers (minimal; Phase 1 will add holiday list)."""
+from __future__ import annotations
+
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 

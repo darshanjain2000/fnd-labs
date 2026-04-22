@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.api.deps import get_orchestrator, set_mock_quote
+from app.routers.deps import get_orchestrator, set_mock_quote
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.services.angel_session import get_angel_session
@@ -274,12 +274,8 @@ class MarketScheduler:
             return  # don't open new trades after square-off time
 
         # 3. Generate & execute new signals per symbol (skip if already in a trade)
-        from app.db import SessionLocal
-        from app.models.trade import Trade
-        with SessionLocal() as db:
-            symbols_in_trade = {
-                r[0] for r in db.query(Trade.symbol).filter(Trade.status == "OPEN").all()
-            }
+        from app.dal.trade_dal import TradeDAL
+        symbols_in_trade = set(TradeDAL().list_open_symbols())
         skipped = 0
         for sym, (_exch, df) in candle_dfs.items():
             if sym in symbols_in_trade:

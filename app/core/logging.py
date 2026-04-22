@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import sys
 
@@ -53,6 +55,10 @@ _EVENT_FRIENDLY: dict[str, str] = {
     # Backtester
     "backtest_started":             ">> Backtest started  {strategy}  {symbol}  {from_date} -> {to_date}",
     "backtest_done":                "   Backtest done  trades={trades}  pnl={pnl:.2f}  sharpe={sharpe:.3f}  win_rate={win_rate:.1%}",
+    "backtest_strategy_not_found":  "!! Backtest: strategy '{requested}' not found. Available: {available}",
+    "backtest_summary":             "   Backtest summary:\n{summary}",
+    "optimize_strategy_not_found":  "!! Optimize: strategy '{requested}' not found or has no search space.",
+    "optimize_result":              "   Optimize result: {result}",
     # Ensemble conviction
     "signal_dropped_low_confidence": "   [-] Dropped {symbol} {strategy} {side} (conf={confidence:.2f} < {threshold:.2f})",
     "ensemble_insufficient":        "   [X] No conviction  {symbol}  sides={side_counts}  need={required}",

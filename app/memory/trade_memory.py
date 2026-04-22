@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.dal.trade_dal import TradeDAL
 from app.db import SessionLocal
 from app.models.trade import Trade
 
@@ -41,6 +42,7 @@ class TradeStats:
 class TradeMemory:
     def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
         self._session_factory = session_factory
+        self._trade_dal = TradeDAL(session_factory=session_factory)
 
     # ---- raw fetches ------------------------------------------------------
     def recent_similar(
@@ -51,14 +53,10 @@ class TradeMemory:
         k: int = 5,
     ) -> list[dict[str, Any]]:
         """Last k CLOSED trades matching the filters. Most recent first."""
-        with self._session_factory() as session:
-            q = session.query(Trade).filter(Trade.status == "CLOSED", Trade.symbol == symbol)
-            if strategy:
-                q = q.filter(Trade.strategy == strategy)
-            if side:
-                q = q.filter(Trade.side == side)
-            rows = q.order_by(Trade.closed_at.desc().nullslast()).limit(k).all()
-            return [self._row_to_dict(r) for r in rows]
+        rows = self._trade_dal.find_closed_by_symbol(
+            symbol, strategy=strategy, side=side, limit=k
+        )
+        return [self._row_to_dict(r) for r in rows]
 
     def stats(self, symbol: str, strategy: str | None, side: str | None) -> TradeStats:
         with self._session_factory() as session:

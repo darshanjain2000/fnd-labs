@@ -281,7 +281,7 @@ def _main() -> None:
         else [cls for cls in ALL_STRATEGIES if cls.name == args.strategy]
     )
     if not target_classes:
-        print(f"Strategy '{args.strategy}' not found or has no search space.")
+        log.error("optimize_strategy_not_found", requested=args.strategy)
         return
 
     # Load data: real from Angel API or synthetic
@@ -308,7 +308,7 @@ def _main() -> None:
             capital=args.capital, risk_pct=args.risk_pct,
         )
         all_results.append(result)
-        print(result)
+        log.info("optimize_result", result=result)
 
     if args.output:
         import os
