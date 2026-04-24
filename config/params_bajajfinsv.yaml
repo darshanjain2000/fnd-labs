@@ -1,0 +1,21 @@
+ema_breakout:
+  best_params:
+    atr_mult: 2.9485479210277408
+  best_value: 191.2512
+  metric: sortino
+  strategy: ema_breakout
+macd_divergence:
+  best_params:
+    atr_mult: 2.0695525890011632
+    reward_ratio: 3.7514060081299876
+  best_value: 263.5259
+  metric: sortino
+  strategy: macd_divergence
+rsi_reversal:
+  best_params:
+    atr_mult: 2.9350636847611065
+    overbought: 69.70019961339297
+    oversold: 32.17694128476826
+  best_value: 282.2503
+  metric: sortino
+  strategy: rsi_reversal

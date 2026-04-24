@@ -38,6 +38,22 @@ CONFIG_DIR = Path(__file__).parent / "config"
 _DEFAULT_LOOKBACK_YEARS = 5
 
 
+def _cleanup_legacy_debug_yaml() -> int:
+    """Delete legacy ``_debug_*.yaml`` files from config.
+
+    Returns:
+        Number of files removed.
+    """
+    removed = 0
+    for path in CONFIG_DIR.glob("_debug_*.yaml"):
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def _default_date_range() -> tuple[str, str]:
     """Return (from_date, to_date) strings covering the last 5 years.
 
@@ -69,15 +85,21 @@ def _run_optimizer(
         trials: Number of Optuna trials.
         tmp_path: Temporary output YAML path for this strategy.
     """
+    # Always use the venv Python if available
+    import os
+    venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.venv', 'Scripts', 'python.exe')
+    python_exec = venv_python if os.path.exists(venv_python) else sys.executable
     cmd = [
-        sys.executable, "-m", "app.backtest.optimize",
-        "--strategy", strategy,
-        "--symbol", symbol,
-        "--from", from_date,
-        "--to", to_date,
-        "--interval", interval,
-        "--trials", str(trials),
-        "--output", str(tmp_path),
+        python_exec,
+        '-m',
+        'app.backtest.optimize',
+        '--strategy', strategy,
+        '--symbol', symbol,
+        '--from', from_date,
+        '--to', to_date,
+        '--interval', interval,
+        '--trials', str(trials),
+        '--output', str(tmp_path),
     ]
     subprocess.run(cmd, check=True)
 
@@ -124,7 +146,12 @@ def main() -> None:
     args = parser.parse_args()
 
     CONFIG_DIR.mkdir(exist_ok=True)
+    cleaned = _cleanup_legacy_debug_yaml()
+    if cleaned:
+        print(f"Removed {cleaned} legacy debug YAML files from config/")
+
     combined: dict[str, dict] = {}
+    skipped: list[str] = []
 
     for strategy in STRATEGIES:
         print(f"\n=== Optimizing {strategy} for {args.symbol} ({args.from_date} → {args.to_date}) ===")
@@ -139,7 +166,13 @@ def main() -> None:
                 trials=args.trials,
                 tmp_path=tmp_path,
             )
-            combined[strategy] = _load_best_params(tmp_path)
+            result = _load_best_params(tmp_path)
+            best_val = result.get("best_value", -999)
+            if best_val <= 0:
+                print(f"  [SKIP] {strategy}: best_value={best_val:.4f} <= 0 — no profitable config found")
+                skipped.append(strategy)
+            else:
+                combined[strategy] = result
         finally:
             # Always clean up temporary per-strategy file
             if tmp_path.exists():
@@ -151,7 +184,9 @@ def main() -> None:
         yaml.dump(combined, fh, default_flow_style=False, sort_keys=True)
 
     print(f"\nOptimized parameters saved: {output_path}")
-    print(f"Strategies: {', '.join(combined.keys())}")
+    print(f"Included: {', '.join(combined.keys())}")
+    if skipped:
+        print(f"Skipped (negative best_value): {', '.join(skipped)}")
     print("The live trading pipeline will automatically use these params for", args.symbol)
 
 

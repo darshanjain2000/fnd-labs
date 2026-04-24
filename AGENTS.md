@@ -656,27 +656,186 @@ def test_validate_raises_on_spend_cap_exceeded() -> None: ...
 
 ### Backtesting & Optimization
 
-#### Backtesting
-- Run a backtest for a single strategy and symbol:
-  ```powershell
-  python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
-  ```
+#### Single-Symbol Backtest
+Run a backtest for one strategy and symbol:
+```powershell
+python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
+```
 
-#### Optuna Hyperparameter Optimization
-- Run Optuna optimization for all 7 strategies on a symbol (default: last 5 years):
-  ```powershell
-  python optimize_all.py --symbol NIFTY
-  ```
-- This creates `config/params_nifty.yaml` with best params for each strategy. The live pipeline will auto-load these for that symbol.
-- To override date range or trials:
-  ```powershell
-  python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50
-  ```
+#### Batch Backtest — Modes Overview
+`batch_backtest.py` supports multiple modes. Pick the mode based on what you want to validate.
 
-#### YAML Convention
-- Optimized params are always saved as `config/params_{symbol}.yaml` (lowercase symbol).
-- Each file contains a mapping of strategy name to its best parameters.
-- The live pipeline (SignalAgent) will use these automatically if present.
+Mode quick guide:
+- `baseline` (default): per-strategy isolated backtest using default params.
+- `--use-optimized`: per-strategy isolated backtest using `config/params_{symbol}.yaml`.
+- `--live-parity`: closer to runtime signal behavior (enabled strategies + ensemble selection from `.env`).
+- `--orchestrator-parity`: highest-fidelity entry path (signal -> validation -> risk -> execution in simulation mode).
+
+All modes append to:
+- `backtest/reports/results.csv`
+- `backtest/reports/trades.csv`
+
+#### Batch Backtest — Baseline and Optimized
+```powershell
+# Baseline run (default params):
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m
+
+# With optimized params (reads config/params_{symbol}.yaml per symbol):
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m --use-optimized
+
+# Custom capital / risk:
+python batch_backtest.py --watchlist nse20 --from 2025-01-01 --to 2026-01-01 --interval 5m --capital 50000 --risk-pct 1.5
+```
+Flags:
+- Symbol/date/data: `--watchlist nse20`, `--symbols ADANIENT VEDL`, `--from`, `--to`, `--interval`, `--exchange`
+- Risk/execution sim: `--capital`, `--lot-size`, `--risk-pct`, `--trailing-atr`
+- Param source: `--use-optimized`
+- Conviction mode: `--ensemble N`, `--min-confidence`
+- Runtime-parity modes: `--live-parity`, `--orchestrator-parity`
+
+#### Ensemble Backtest — Conviction Filter Simulation
+When `--ensemble N` is passed, `batch_backtest.py` also runs `run_ensemble_backtest()` which evaluates **all** strategies per bar and only enters a trade when N or more agree on the same side. This simulates the live pipeline's `min_strategy_agreement` logic.
+
+```powershell
+# Require 2 strategies to agree before entering (closest to live pipeline):
+python batch_backtest.py --symbols JSWSTEEL --from 2025-04-23 --to 2026-04-23 --interval 5m --use-optimized --ensemble 2
+
+# Full watchlist, ensemble 2, min confidence 0.6:
+python batch_backtest.py --watchlist nse20 --from 2025-04-23 --to 2026-04-23 --interval 5m --use-optimized --ensemble 2 --min-confidence 0.6
+```
+
+Results appear as strategy `"ensemble_2"` (or `"ensemble_N"`) in `results.csv`.
+
+**Key difference from single-strategy backtest**: Individual backtests test each strategy in isolation (no ensemble, no LLM, no risk gates). The ensemble backtest matches how the live pipeline filters trades — use it to get realistic trade counts and win rates.
+
+#### Live-Parity Backtest (from .env settings)
+Use this when you want `.env`-driven strategy/gate behavior with optimized params and ensemble selection logic.
+
+```powershell
+# Uses enabled strategies and gates from .env, plus optimized params.
+python batch_backtest.py --live-parity --symbols ZENTEC GRAVITA VEDL ADANIPORTS RECLTD --from 2026-03-24 --to 2026-04-24 --interval 5m
+
+# Override agreement threshold for this run only (instead of .env value)
+python batch_backtest.py --live-parity --ensemble 2 --symbols ZENTEC GRAVITA --from 2026-03-24 --to 2026-04-24 --interval 5m
+
+# Override confidence threshold for this run only
+python batch_backtest.py --live-parity --min-confidence 0.65 --symbols ZENTEC GRAVITA --from 2026-03-24 --to 2026-04-24 --interval 5m
+```
+
+Notes:
+- If `--ensemble` is omitted in live-parity mode, `.env` `MIN_STRATEGY_AGREEMENT` is used.
+- If `--min-confidence` is omitted in live-parity mode, `.env` `MIN_SIGNAL_CONFIDENCE` is used.
+
+#### Orchestrator-Parity Backtest (highest fidelity)
+Use this when you want backtest entry decisions to follow runtime pipeline order as closely as possible.
+
+Pipeline used per bar:
+- `SignalService` -> conviction selection -> `ValidationService` -> `RiskEngine` -> simulated `ExecutionService`
+
+```powershell
+# Full orchestrator-parity on selected symbols
+python batch_backtest.py --orchestrator-parity --symbols ZENTEC GRAVITA VEDL ADANIPORTS RECLTD --from 2026-03-24 --to 2026-04-24 --interval 5m
+
+# Same mode on the full watchlist
+python batch_backtest.py --orchestrator-parity --watchlist nse20 --from 2026-03-24 --to 2026-04-24 --interval 5m
+```
+
+Notes:
+- This mode is slower than baseline/optimized runs.
+- It is best used for final validation before paper/live deployment.
+
+#### env_backtest.py (date-only runner, config from .env)
+`env_backtest.py` is the easiest runner when you want to pass only dates.
+It auto-reads from `.env`:
+- symbols from `WATCHLIST`
+- strategies from `ENABLED_STRATEGIES`
+- gates and thresholds from settings
+
+```powershell
+# Default mode = orchestrator parity
+python env_backtest.py --from 2026-03-24 --to 2026-04-24
+
+# Explicit orchestrator mode
+python env_backtest.py --from 2026-03-24 --to 2026-04-24 --mode orchestrator
+
+# Live-parity mode (faster than orchestrator mode)
+python env_backtest.py --from 2026-03-24 --to 2026-04-24 --mode live-parity
+
+# Optional overrides
+python env_backtest.py --from 2026-03-24 --to 2026-04-24 --interval 5m --capital 25000 --lot-size 1 --risk-pct 1.0 --trailing-atr 0.0
+```
+
+Tip for API quota windows:
+- If Angel returns `AB1021 (Too many requests)`, retry with fewer symbols or narrower date range.
+
+#### Optuna Hyperparameter Optimization — Single Symbol
+Runs all 7 strategies for one symbol. Writes `config/params_{symbol}.yaml`. Trials persist in `config/optuna_studies.db` — re-runs add to existing trials (warm-start), they do not restart.
+```powershell
+# All 7 strategies, last 5 years (default), 100 trials:
+python optimize_all.py --symbol NIFTY
+
+# Override date range and trial count:
+python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2026-01-01 --trials 200
+
+# Optimize for win rate instead of Sortino ratio:
+python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2026-01-01 --trials 100 --metric win_rate
+```
+
+#### Batch Optimize — All Symbols
+`batch_optimize.py` (root) runs `optimize_all.py` for every symbol in a watchlist. Default: last 2 years, 100 trials per strategy.
+```powershell
+# Full NSE20 watchlist, 100 trials per strategy (default):
+python batch_optimize.py --watchlist nse20 --from 2024-04-23 --to 2026-04-23 --interval 5m
+
+# Quick 50-trial test on specific symbols:
+python batch_optimize.py --symbols JSWSTEEL BAJAJFINSV --trials 50 --from 2024-04-23 --to 2026-04-23
+```
+Flags: `--watchlist nse20`, `--symbols`, `--from`, `--to`, `--interval`, `--trials` (default 100)
+
+> **Note**: `TATAMOTORS` and `ZOMATO` are always skipped — Angel API token not found in local scrip master. `GRAVITA` may fail intermittently.
+
+#### Compare Backtest Runs (Baseline vs Optimized)
+`compare_backtest.py` (root) reads `backtest/reports/results.csv`, picks the last two `run_at` timestamps, and prints a side-by-side delta table (per-strategy and per-symbol P&L, trade count, profitable runs).
+```powershell
+# Auto-compare last two runs (baseline vs optimized):
+python compare_backtest.py
+
+# Pin specific runs by timestamp:
+python compare_backtest.py --baseline "2026-04-22 22:45:52" --optimized "2026-04-22 23:23:11"
+```
+
+#### YAML Convention & Optuna Persistence
+- Optimized params: `config/params_{symbol_lower}.yaml` (e.g. `params_jswsteel.yaml`).
+- Optuna study history: `config/optuna_studies.db` (SQLite). Each study is named `{strategy}__{symbol}`. Re-running adds trials without resetting — **warm-start is automatic**.
+- The live pipeline (`SignalAgent`) auto-loads `config/params_{symbol}.yaml` on startup for every enabled symbol.
+- To inspect stored trials: `optuna-dashboard sqlite:///config/optuna_studies.db` (requires `optuna-dashboard` package).
+
+#### Workflow: Baseline → Optimize → Validate → Compare
+```powershell
+# 1. Baseline backtest (records pre-optimization P&L)
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m
+
+# 2. Optimize (100 trials, 2yr data — results persist in optuna_studies.db)
+python batch_optimize.py --watchlist nse20 --from 2024-04-23 --to 2026-04-23 --trials 100
+
+# 3. Re-run backtest with optimized params
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m --use-optimized
+
+# 4. Compare
+python compare_backtest.py
+```
+
+#### Research: Path to 80% Win Rate
+Current per-trade win rate ~45-50% from ~14k trades across 18 symbols. Stacked gates (implement in order) to reach 80%:
+1. Raise `min_strategy_agreement` to 3 in `.env` (cuts trade count >50%, keeps only highest-conviction)
+2. Volume confirmation: require volume > 1.5× 20-bar avg at entry
+3. ATR filter: skip signals when ATR < 0.5% of price
+4. Optimize with `--metric win_rate` instead of Sortino
+5. Hard regime gate: only momentum strats in trending regime, only mean-reversion in ranging
+6. R:R gate in RiskEngine: `target / SL ≥ 2.0`
+7. Walk-Forward Efficiency gate: only deploy params with `OOS_sortino / IS_sortino ≥ 0.7`
+
+See `docs/plan.md` sections 3H–3K for full detail.
 
 ---
 
@@ -715,7 +874,6 @@ These are real issues already identified by audit. Fix them opportunistically wh
 | `app/agents/signal_agent.py` | `generate()` lacks docstring | Low |
 | `app/services/llm_client.py` | `except Exception` in `chat_json` is intentionally broad but undocumented — add a comment | Low |
 | `app/services/angel_session.py` | Multiple `except Exception` blocks — each needs a comment explaining why | Medium |
-| `tests/` | No `conftest.py` — shared fixtures like `_sig()` and `_engine()` are duplicated across test files | Medium |
 | `tests/test_risk_engine.py` | Test helper `_sig()` not typed or docstringed | Low |
 | All `app/api/` routes | Route handlers lack docstrings (Swagger shows blank descriptions) | Low |
 | `app/engine/risk_engine.py` | `position_size()` docstring is one line — missing `Args/Returns` | Low |

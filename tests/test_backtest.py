@@ -1,12 +1,24 @@
 """Tests for the backtester and Optuna optimiser (Phase 3)."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 
-from app.backtest.runner import BacktestResult, TradeRecord, run_backtest, walk_forward
+from app.backtest.runner import (
+    BacktestResult,
+    TradeRecord,
+    _fetch_real_data,
+    _pick_ensemble_signal,
+    run_orchestrator_parity_backtest,
+    run_backtest,
+    run_ensemble_backtest,
+    walk_forward,
+)
 from app.engine.risk_engine import RiskEngine, compute_kelly_fraction
 from app.services.market_data import compute_indicators
+from app.strategies.base import Signal
 from app.strategies.ema_breakout import EMABreakout
 from app.strategies.rsi_reversal import RSIReversal
 
@@ -125,6 +137,107 @@ def test_walk_forward_produces_oos_trades() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ensemble conviction filter (_pick_ensemble_signal)
+# ---------------------------------------------------------------------------
+
+def test_pick_ensemble_signal_returns_none_on_no_agreement() -> None:
+    """Single signal should not pass when min_agreement=2."""
+    signals = [
+        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.8),
+    ]
+    best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
+    assert best is None
+    assert contribs == []
+
+
+def test_pick_ensemble_signal_returns_best_on_agreement() -> None:
+    """Two BUY signals should pass when min_agreement=2, picking highest confidence."""
+    signals = [
+        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.6),
+        Signal(symbol="X", strategy="ema", side="BUY", entry=100, stop_loss=98, confidence=0.9),
+    ]
+    best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
+    assert best is not None
+    assert best.strategy == "ema"
+    assert best.confidence == 0.9
+    assert sorted(contribs) == ["ema", "rsi"]
+
+
+def test_pick_ensemble_signal_drops_low_confidence() -> None:
+    """Signals below min_confidence should be dropped before counting."""
+    signals = [
+        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.3),
+        Signal(symbol="X", strategy="ema", side="BUY", entry=100, stop_loss=98, confidence=0.8),
+    ]
+    # Only 1 strong signal left — not enough for agreement=2
+    best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
+    assert best is None
+    assert contribs == []
+
+
+def test_pick_ensemble_signal_picks_majority_side() -> None:
+    """When 2 BUY and 1 SELL, BUY side wins."""
+    signals = [
+        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.7),
+        Signal(symbol="X", strategy="ema", side="BUY", entry=100, stop_loss=98, confidence=0.6),
+        Signal(symbol="X", strategy="macd", side="SELL", entry=100, stop_loss=102, confidence=0.9),
+    ]
+    best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
+    assert best is not None
+    assert best.side == "BUY"
+    assert best.strategy == "rsi"  # highest confidence on BUY side
+    assert sorted(contribs) == ["ema", "rsi"]
+
+
+def test_pick_ensemble_signal_empty_returns_none() -> None:
+    """Empty signal list returns None."""
+    best, contribs = _pick_ensemble_signal([], min_agreement=1, min_confidence=0.5)
+    assert best is None
+    assert contribs == []
+
+
+# ---------------------------------------------------------------------------
+# run_ensemble_backtest
+# ---------------------------------------------------------------------------
+
+def test_ensemble_backtest_returns_single_result() -> None:
+    """Ensemble backtest should return a single BacktestResult."""
+    df = _df(n=300)
+    result = run_ensemble_backtest(
+        df, [RSIReversal(), EMABreakout()],
+        symbol="TEST", min_agreement=2,
+    )
+    assert isinstance(result, BacktestResult)
+    assert result.strategy == "ensemble_2"
+    assert result.symbol == "TEST"
+
+
+def test_ensemble_backtest_fewer_trades_than_individual() -> None:
+    """Ensemble mode should produce fewer (or equal) trades than any single strategy."""
+    df = _df(n=400, seed=99)
+    strategies = [RSIReversal(), EMABreakout()]
+
+    individual = run_backtest(df, strategies, symbol="TEST")
+    max_individual_trades = max(len(r.trades) for r in individual)
+
+    ensemble = run_ensemble_backtest(
+        df, strategies, symbol="TEST", min_agreement=2,
+    )
+    assert len(ensemble.trades) <= max_individual_trades
+
+
+def test_ensemble_backtest_with_agreement_1_matches_relaxed() -> None:
+    """With min_agreement=1, ensemble should still produce valid trades."""
+    df = _df(n=300)
+    result = run_ensemble_backtest(
+        df, [RSIReversal()],
+        symbol="TEST", min_agreement=1,
+    )
+    assert isinstance(result, BacktestResult)
+    assert result.strategy == "ensemble_1"
+
+
+# ---------------------------------------------------------------------------
 # compute_kelly_fraction (utility function)
 # ---------------------------------------------------------------------------
 
@@ -227,8 +340,110 @@ def test_signal_agent_regime_filter_disabled_passes_all() -> None:
     )
     df = compute_indicators(df_raw)
 
-    s = Settings(mode="paper", regime_filter_enabled=False)
+    s = Settings(
+        mode="paper",
+        regime_filter_enabled=False,
+        volume_filter_enabled=False,
+        atr_filter_enabled=False,
+    )
     agent = SignalAgent(strategies=[RSIReversal()], settings=s)
     signals = agent.generate("X", df)
     # RSI reversal should still fire on deep oversold regardless of regime filter
     assert len(signals) >= 1
+
+
+def test_fetch_real_data_skips_empty_trailing_chunk(monkeypatch) -> None:
+    """A trailing empty SmartAPI chunk should be skipped when prior chunks have data."""
+
+    test_symbol = "TEST_SYMBOL"
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch_candles_for_symbol(
+            self,
+            symbol: str,
+            exchange: str,
+            interval: str,
+            from_dt,
+            to_dt,
+        ) -> pd.DataFrame:
+            self.calls += 1
+            if self.calls == 1:
+                return pd.DataFrame(
+                    [
+                        {
+                            "datetime": pd.Timestamp("2026-01-30 09:15:00"),
+                            "open": 100.0,
+                            "high": 101.0,
+                            "low": 99.0,
+                            "close": 100.5,
+                            "volume": 1000,
+                        },
+                        {
+                            "datetime": pd.Timestamp("2026-01-30 09:20:00"),
+                            "open": 100.5,
+                            "high": 101.2,
+                            "low": 100.2,
+                            "close": 100.8,
+                            "volume": 1200,
+                        },
+                    ]
+                )
+            raise RuntimeError(
+                "Angel candle fetch failed: {'status': True, 'message': 'SUCCESS', "
+                "'errorcode': '', 'data': []}"
+            )
+
+    fake_session = _FakeSession()
+
+    monkeypatch.setattr(
+        "app.services.angel_session.get_angel_session",
+        lambda: fake_session,
+    )
+    monkeypatch.setattr(
+        "app.backtest.runner.get_settings",
+        lambda: SimpleNamespace(backtest_fetch_chunk_days=30, fetch_stagger_ms=0),
+    )
+    monkeypatch.setattr("app.backtest.runner.time.sleep", lambda _: None)
+
+    df = _fetch_real_data(
+        symbol=test_symbol,
+        exchange="NSE",
+        interval="5m",
+        from_date="2026-01-01",
+        to_date="2026-01-31",
+    )
+
+    assert not df.empty
+    assert fake_session.calls == 2
+
+
+def test_orchestrator_parity_backtest_runs_without_error() -> None:
+    """Orchestrator-parity mode should run and return a valid result object."""
+    from app.config import Settings
+
+    df = _df(n=220)
+    settings = Settings(
+        mode="paper",
+        openrouter_enabled=False,
+        memory_source="off",
+        enabled_strategies="ema_breakout",
+        min_strategy_agreement=1,
+        min_signal_confidence=0.5,
+        signal_memory_ticks=2,
+        volume_filter_enabled=False,
+        atr_filter_enabled=False,
+        rr_gate_enabled=False,
+    )
+
+    result = run_orchestrator_parity_backtest(
+        df,
+        symbol="TEST",
+        settings=settings,
+        lot_size=1,
+    )
+
+    assert isinstance(result, BacktestResult)
+    assert result.strategy == "orchestrator_parity"

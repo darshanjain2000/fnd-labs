@@ -40,6 +40,45 @@ def _htf_agrees(signal: Signal, htf_candles: pd.DataFrame | None) -> bool:
     return ema20 < ema50
 
 
+def _volume_ok(signal: Signal, candles: pd.DataFrame, settings: Settings) -> bool:
+    """Return True when current bar volume exceeds the 20-bar average multiple.
+
+    Args:
+        signal: The candidate signal (unused, kept for gate signature symmetry).
+        candles: OHLCV DataFrame that should contain a ``volume`` column.
+        settings: Active settings with ``min_volume_multiple``.
+
+    Returns:
+        True if the volume gate passes, or if volume data is unavailable.
+    """
+    if "volume" not in candles.columns or len(candles) < 21:
+        return True
+    current_vol = float(candles["volume"].iloc[-1])
+    avg_vol = float(candles["volume"].iloc[-21:-1].mean())
+    if avg_vol <= 0:
+        return True
+    return current_vol >= settings.min_volume_multiple * avg_vol
+
+
+def _atr_ok(signal: Signal, candles: pd.DataFrame, settings: Settings) -> bool:
+    """Return True when ATR is large enough to avoid whipsaw trades.
+
+    Args:
+        signal: Candidate signal with ``entry`` used for ATR percentage.
+        candles: OHLCV DataFrame that should contain an ``atr14`` column.
+        settings: Active settings with ``min_atr_pct``.
+
+    Returns:
+        True if ATR >= min_atr_pct % of entry, or if data is unavailable.
+    """
+    if "atr14" not in candles.columns:
+        return True
+    atr = float(candles["atr14"].iloc[-1])
+    if pd.isna(atr) or signal.entry <= 0:
+        return True
+    return (atr / signal.entry * 100) >= settings.min_atr_pct
+
+
 class SignalService:
     """Produces candidate trading signals from strategies for a symbol."""
 
@@ -64,10 +103,28 @@ class SignalService:
         """Default strategy instances (no symbol-specific params applied)."""
         if self._default_strategies is not None:
             return self._default_strategies
-        return [s() for s in ALL_STRATEGIES]
+        return self._filter_enabled([s() for s in ALL_STRATEGIES])
+
+    def _filter_enabled(self, instances: list[Strategy]) -> list[Strategy]:
+        """Return only strategies whose names appear in ``enabled_strategies``.
+
+        If ``enabled_strategies`` is empty, all strategies are returned.
+
+        Args:
+            instances: Full list of strategy instances.
+
+        Returns:
+            Filtered list of strategy instances.
+        """
+        enabled = self._settings.strategy_list()
+        if not enabled:
+            return instances
+        return [s for s in instances if s.name in enabled]
 
     def _strategies_for(self, symbol: str) -> list[Strategy]:
         """Return strategy instances for ``symbol``, loading optimized params once.
+
+        Filters by ``enabled_strategies`` and caches per-symbol results.
 
         Args:
             symbol: NSE trading symbol.
@@ -101,7 +158,7 @@ class SignalService:
                     )
                     strat = cls()
                 instances.append(strat)
-            self._strategy_cache[symbol] = instances
+            self._strategy_cache[symbol] = self._filter_enabled(instances)
 
         return self._strategy_cache[symbol]
 
@@ -147,6 +204,23 @@ class SignalService:
                 log.warning("strategy_error", strategy=strat.name, symbol=symbol, error=str(e))
                 continue
             if sig is None:
+                continue
+            if self._settings.volume_filter_enabled and not _volume_ok(sig, candles, self._settings):
+                log.debug(
+                    "signal_rejected_low_volume",
+                    symbol=symbol,
+                    strategy=strat.name,
+                    side=sig.side,
+                    min_volume_multiple=self._settings.min_volume_multiple,
+                )
+                continue
+            if self._settings.atr_filter_enabled and not _atr_ok(sig, candles, self._settings):
+                log.debug(
+                    "signal_rejected_low_atr",
+                    symbol=symbol,
+                    strategy=strat.name,
+                    side=sig.side,
+                )
                 continue
             if self._settings.require_htf_agreement and not _htf_agrees(sig, htf_candles):
                 log.debug(

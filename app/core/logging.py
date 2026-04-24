@@ -51,6 +51,9 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "regime_detected":              "   [R] Regime  {symbol} -> {regime}",
     "strategy_skipped_regime":      "   [-] Skipped {strategy} (regime={regime}, symbol={symbol})",
     "signal_rejected_htf":          "   [X] HTF rejected  {symbol} {strategy} {side} (HTF EMA disagrees)",
+    "signal_rejected_low_volume":   "Signal {strategy} {symbol} rejected - volume below {min_volume_multiple}x 20-bar avg",
+    "signal_rejected_low_atr":      "Signal {strategy} {symbol} rejected - ATR too low (whipsaw guard)",
+    "signal_skipped_cooldown":      "{symbol} in cooldown - {ticks_remaining} tick(s) remaining",
     "kelly_fraction_updated":       "   [K] Kelly fraction -> {fraction:.2f}",
     # Backtester
     "backtest_started":             ">> Backtest started  {strategy}  {symbol}  {from_date} -> {to_date}",
@@ -64,6 +67,7 @@ _EVENT_FRIENDLY: dict[str, str] = {
     "ensemble_insufficient":        "   [X] No conviction  {symbol}  sides={side_counts}  need={required}",
     "ensemble_selected":            "   [*] Conviction  {symbol} {side}  {agreement}/{total} strategies  best={strategy} conf={confidence:.2f}",
     "signal_memory_merged":         "   [M] Signal memory  {symbol}  {current} new + buffer -> {buffered} merged (window={window})",
+    "ensemble_backtest_done":       "   [E] Ensemble backtest  {symbol}  agree={min_agreement}  strats={strategies}  trades={trades}",
     "backtest_fetching_data":       ">> Fetching {symbol} candles from Angel  {exchange} {interval}  {from_date} -> {to_date}",
     # Optuna optimizer
     "optimize_fetching_real_data":  ">> Optimizer fetching {symbol} candles  {interval}  {from_date} -> {to_date}",

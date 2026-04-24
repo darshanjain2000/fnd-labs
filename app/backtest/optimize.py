@@ -139,21 +139,31 @@ def optimize(
     capital: float = 25_000.0,
     lot_size: int = 1,
     risk_pct: float = 1.0,
+    symbol: str | None = None,
+    storage_path: str = "sqlite:///config/optuna_studies.db",
 ) -> dict[str, Any]:
     """Search for optimal hyperparameters using Optuna.
 
     The dataset is split train/OOS at *train_frac*. The objective function
     evaluates the strategy on the OOS portion only (prevents overfitting).
+    Trials are persisted to *storage_path* so re-runs accumulate rather than
+    restart (Walk-Forward warm-starting).
 
     Args:
         strategy_class: Strategy class to optimise (must be in _PARAM_SPACES).
         df: OHLCV DataFrame with indicators. Defaults to synthetic data.
         n_trials: Number of Optuna trials (default 50).
-        metric: Objective metric — "sortino" (default) or "sharpe".
+        metric: Objective metric — "sortino" (default), "sharpe", or "win_rate".
         train_frac: Fraction of data used as training window (OOS = 1-train_frac).
         capital: Starting capital in INR.
         lot_size: F&O lot size.
         risk_pct: Per-trade risk percentage.
+        symbol: NSE symbol used to scope the Optuna study name. When provided
+            the study is named ``"{strategy}__{symbol}"`` so different symbols
+            maintain independent trial histories.
+        storage_path: SQLAlchemy URL for the Optuna study store. Defaults to
+            a SQLite file at ``config/optuna_studies.db`` (relative to cwd).
+            Set to ``None`` to fall back to in-memory (testing only).
 
     Returns:
         Dict with "best_params", "best_value", and "strategy" keys.
@@ -198,9 +208,21 @@ def optimize(
         if not results or not results[0].trades:
             return -999.0
         r = results[0]
+        # Require a meaningful sample size for any metric to avoid
+        # overfitting to 1-3 lucky trades.
+        if len(r.trades) < 10:
+            return -999.0
+        if metric == "win_rate":
+            return r.win_rate
         return r.sortino if metric == "sortino" else r.sharpe
 
-    study = optuna.create_study(direction="maximize")
+    study_name = f"{strat_name}__{symbol}" if symbol else strat_name
+    study = optuna.create_study(
+        direction="maximize",
+        storage=storage_path,
+        study_name=study_name,
+        load_if_exists=True,
+    )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     best = study.best_trial
@@ -255,7 +277,7 @@ def _main() -> None:
     parser = argparse.ArgumentParser(description="Optimise strategy hyperparameters with Optuna.")
     parser.add_argument("--strategy", default="all")
     parser.add_argument("--trials", type=int, default=50)
-    parser.add_argument("--metric", default="sortino", choices=["sortino", "sharpe"])
+    parser.add_argument("--metric", default="sortino", choices=["sortino", "sharpe", "win_rate"])
     parser.add_argument("--output", default="config/optimized_params.yaml")
     parser.add_argument("--capital", type=float, default=25_000.0)
     parser.add_argument("--risk-pct", type=float, default=1.0)
@@ -306,6 +328,7 @@ def _main() -> None:
         result = optimize(
             cls, df=df, n_trials=args.trials, metric=args.metric,
             capital=args.capital, risk_pct=args.risk_pct,
+            symbol=args.symbol,
         )
         all_results.append(result)
         log.info("optimize_result", result=result)

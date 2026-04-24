@@ -196,6 +196,8 @@ class Orchestrator:
         # Signal memory: per-symbol deque of (tick_id, Signal) tuples
         self._signal_buffer: dict[str, deque[tuple[int, Signal]]] = {}
         self._tick_counter: int = 0
+        # Per-symbol tick when a signal was last selected (for cooldown enforcement)
+        self._last_signal_tick: dict[str, int] = {}
 
     def run(
         self,
@@ -225,6 +227,17 @@ class Orchestrator:
         s = get_settings()
         self._tick_counter += 1
 
+        # -- Cooldown: block new signals for signal_cooldown_ticks after last selected signal --
+        cooldown = s.signal_cooldown_ticks
+        last_tick = self._last_signal_tick.get(symbol)
+        if last_tick is not None and cooldown > 0 and (self._tick_counter - last_tick) < cooldown:
+            log.debug(
+                "signal_skipped_cooldown",
+                symbol=symbol,
+                ticks_remaining=cooldown - (self._tick_counter - last_tick),
+            )
+            return []
+
         # -- Signal memory: merge current signals with recent buffer --
         merged = self._merge_with_buffer(symbol, signals, s)
 
@@ -232,6 +245,7 @@ class Orchestrator:
         if best is None:
             return []
 
+        self._last_signal_tick[symbol] = self._tick_counter
         regime = detect_regime(candles)
         corroborating = sum(1 for sig in merged if sig.side == best.side)
         return [self._process_one(best, is_expiry_day, regime=regime, corroborating_count=corroborating)]

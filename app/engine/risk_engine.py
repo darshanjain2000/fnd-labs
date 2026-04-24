@@ -11,6 +11,7 @@ Rules (all must pass before an order is placed):
 
 Phase 3 addition:
   8. Optional half-Kelly multiplier on risk_pct (kelly_sizing_enabled).
+    9. R:R gate: target/SL must be >= min_rr_ratio when rr_gate_enabled (default 2.0).
 
 AI cannot override rejection. Approval still passes through this gate.
 """
@@ -196,5 +197,11 @@ class RiskEngine:
         max_risk = s.capital_inr * (s.max_risk_per_trade_pct / 100.0)
         if risk_amount > max_risk * 1.0001:
             return RiskDecision(False, 0, "risk_exceeds_cap")
+
+        if s.rr_gate_enabled and signal.target is not None:
+            reward = abs(signal.target - signal.entry)
+            risk_per_unit = abs(signal.entry - signal.stop_loss)
+            if risk_per_unit > 0 and reward / risk_per_unit < s.min_rr_ratio:
+                return RiskDecision(False, 0, "rr_below_minimum")
 
         return RiskDecision(True, qty, "ok")

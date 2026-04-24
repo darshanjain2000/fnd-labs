@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # ---- Phase 3: Regime-aware routing --------------------------------
     regime_filter_enabled: bool = True
     """If True, strategies only run in their preferred market regimes."""
+    regime_high_vol_atr_pct_threshold: float = 2.0
+    """ATR%% threshold above which regime is classified as ``high_vol``."""
+    regime_range_spread_pct_threshold: float = 0.2
+    """EMA20/EMA50 spread%% threshold below which regime is classified as ``range``."""
 
     # ---- Phase 3: Multi-timeframe confirmation -----------------------
     require_htf_agreement: bool = False
@@ -106,6 +110,23 @@ class Settings(BaseSettings):
     kill_switch: bool = False
     block_expiry_last_hours: int = 2
 
+    # ---- Signal quality gates ----------------------------------------
+    volume_filter_enabled: bool = True
+    """If True, reject signals where current bar volume < min_volume_multiple x 20-bar avg."""
+    min_volume_multiple: float = 1.5
+    """Minimum volume multiple of the 20-bar average required to pass the volume gate."""
+    atr_filter_enabled: bool = True
+    """If True, reject signals when ATR < min_atr_pct % of the current price (whipsaw guard)."""
+    min_atr_pct: float = 0.5
+    """Minimum ATR as a percentage of price required to pass the ATR filter."""
+    rr_gate_enabled: bool = True
+    """If True, reject signals where |target - entry| / |entry - stop_loss| < min_rr_ratio."""
+    min_rr_ratio: float = 2.0
+    """Minimum reward-to-risk ratio required before a trade is approved by the risk engine."""
+    signal_cooldown_ticks: int = 3
+    """Number of scheduler ticks to wait per symbol after a signal is selected before
+    allowing another. Prevents overtrading immediately after an entry."""
+
     # ---- Intraday runner (live-data paper trading loop) --------------
     auto_run_enabled: bool = False
     """If true, the scheduler starts automatically at app boot and runs during market hours."""
@@ -115,6 +136,12 @@ class Settings(BaseSettings):
     """How often (seconds) to fetch a fresh candle batch per symbol during market hours."""
     run_candle_interval: str = "1m"
     """Candle interval fed to strategies (1m, 3m, 5m, 15m, 30m, 1h)."""
+    backtest_fetch_chunk_days: int = 30
+    """Chunk size (calendar days) for historical backtest candle fetches.
+
+    Angel's historical endpoint can truncate long single requests. Backtest
+    data loader paginates requests in windows of this size and concatenates.
+    """
     fetch_stagger_ms: int = 350
     """Milliseconds to wait between starting each parallel candle fetch.
 

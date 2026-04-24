@@ -100,6 +100,25 @@ Next work splits into **4 phases**:
 - Walk-forward OOS validation (rolling train/test windows) — not yet implemented in `runner.py`.
 - HTF candle resampler (5m→15m+1h) for live scheduler — plumbed in SignalAgent but not yet fetched in scheduler tick.
 
+**3H. Fix Optuna Persistence** — `optuna.create_study()` currently uses in-memory storage; every run starts from scratch. Fix: add `storage="sqlite:///config/optuna_studies.db"`, `study_name=f"{strategy}__{symbol}"`, `load_if_exists=True`. Trials accumulate across runs; warm-starting is free. Also pass `symbol` from `_main()` into `optimize()` so the study name is symbol-scoped. Bump `batch_optimize.py` default `--trials` 30 → 100.
+- Files: `app/backtest/optimize.py`, `batch_optimize.py`
+
+**3I. Walk-Forward OOS Validation** — Add `run_walk_forward(symbol, strategy, df, train_months=12, test_months=3)` to `runner.py`. Train on 12 months, test on next 3, slide by 3 months, average OOS metrics. Compute Walk-Forward Efficiency (WFE) = `OOS_sortino / IS_sortino`. Only deploy params with WFE ≥ 0.7; lower WFE means overfit.
+- Files: `app/backtest/runner.py`
+
+**3J. Win-Rate as Optimization Metric** — Add `win_rate` to objective choices (alongside `sortino`/`sharpe`). Objective returns `r.win_rate`; penalise param sets with < 5 trades (return -999) to avoid 1-trade overfit. Pass via `--metric win_rate` CLI arg.
+- Files: `app/backtest/optimize.py` — objective function + `--metric` choices
+
+**3K. Research: Path to 80% Win Rate** — Current per-trade win rate ~45-50% from ~14k trades/run. Target: 80% via stacked quality gates (implement in order):
+1. **Multi-strategy confluence** — raise `min_strategy_agreement` to 3; trade only when 3+ strategies agree. Expected: trade count drops >50%, keeps highest-conviction only.
+2. **Volume confirmation** — require volume > 1.5× 20-bar avg at entry. Filters noise breakouts; `volume` already in `market_data.py`.
+3. **ATR filter** — skip signal when ATR < 0.5% of price (whipsaw guard). `atr14` already computed.
+4. **Hard regime gate** — make regime routing strict (not scored): only momentum strats in `trend_up/down`, only mean-reversion in `range`.
+5. **R:R gate** — new risk engine gate: only take trades where `target / SL ≥ 2.0`.
+6. **WFE gate** — only deploy optimized params where Walk-Forward Efficiency ≥ 0.7.
+7. **ML signal classifier** (Phase 5+) — XGBoost on signal features, gate at P(win) > 0.7.
+- Files: `app/config.py`, `app/engine/risk_engine.py`, `app/agents/signal_agent.py`, `app/core/optimized_params.py`
+
 ### Files changed (Phase 3)
 - `app/services/market_data.py` — all indicators
 - `app/strategies/` — 4 new strategy files + `base.py` `applies_to_regime()` hook
@@ -174,3 +193,81 @@ LLM rejects ~20-40% of signals. If rejected would-have-lost & approved win, LLM 
 4. **Phase 2 NEXT** — real-trade readiness before any live money (order reconciliation, alerting, circuit breakers).
 5. **Phase 4 AFTER** — 4 weeks paper shadow for LLM A/B measurement.
 6. **Phase 5 LIVE** — only if Phase 2 done + Phase 4 positive EV.
+
+---
+
+## Phase 5 — Swing Trading on Optimized Params
+
+### Goal
+Extend the current 5-minute intraday backtester to support **multi-day swing trades** using optimized Optuna params. Swing = hold 2-10 days, using 1h or 1d candles instead of 5m.
+
+### Steps
+**5A. Multi-interval backtest support** — Modify `runner.py` to accept `interval` as a parameter. The current `_WARMUP_BARS` (60) is tuned for 5m; make it configurable per interval: 60 for 5m, 30 for 1h, 14 for 1d. Strategy ATR/SL/target scales naturally with candle size.
+
+**5B. Swing-specific Optuna optimization** — Run `optimize_all.py --interval 1h` (or `1d`) to find swing params. Store in `config/params_{symbol}_1h.yaml` (separate from intraday). Wider ATR multipliers, longer lookbacks, different RSI thresholds expected.
+
+**5C. Hold-period logic in backtester** — Current backtester forces EOD close. Add `--max-hold-bars N` flag: swing backtests keep positions open across days. Exit conditions: SL, target, trailing stop, or max-hold-bars. Remove forced EOD close when `max-hold-bars > 1`.
+
+**5D. Overnight gap handling** — Swing trades face gap risk. Add configurable `gap_risk_buffer_pct` (e.g., 2%) that widens the stop on open to account for overnight gaps. If `open` gaps past stop, exit at open (not stop).
+
+**5E. Swing params loader** — Extend `optimized_params.py`: `load_params_for_symbol(symbol, interval="5m")` looks for `config/params_{symbol}_{interval}.yaml`, falling back to `config/params_{symbol}.yaml`.
+
+**5F. Batch swing backtest** — `batch_backtest.py --interval 1h --max-hold-bars 50 --use-optimized` runs swing backtests across all symbols. Results and trades append to same CSVs with interval column.
+
+**5G. Compare scripts** — Add interval filter to all compare scripts (`--interval 1h`). Compare intraday vs swing performance side by side.
+
+### Files to change
+- `app/backtest/runner.py` — configurable warmup, max-hold-bars, gap handling
+- `app/core/optimized_params.py` — interval-aware file lookup
+- `batch_backtest.py` — `--max-hold-bars` flag, interval in CSV output
+- `optimize_all.py` — interval-aware study naming
+- Results/trades CSV — add `interval` column
+- Compare scripts — interval filter
+
+### Verification
+- Swing backtest on ADANIENT 1h, 2024-2026, produces valid multi-day trades
+- Swing Optuna params differ from intraday (wider ATR, different RSI)
+- Compare: swing vs intraday P&L, trade count, avg hold period
+
+---
+
+## Phase 6 — POC to Production Readiness
+
+### Architecture Improvements
+
+**6A. CSV → SQLite for backtest results** — Replace flat CSV append with SQLite tables (`backtest_runs`, `backtest_results`, `backtest_trades`). Benefits: queryable, no duplicate-run issues, proper indexing. Migration: one-time import of existing CSVs.
+
+**6B. Proper CLI framework** — Replace ad-hoc `argparse` scripts with a unified CLI (`click` or `typer`): `trading-bot backtest run`, `trading-bot optimize`, `trading-bot compare`, `trading-bot serve`. Single entry point.
+
+**6C. Configuration profiles** — Move from single `.env` to profiles: `config/paper.env`, `config/live.env`, `config/backtest.env`. `APP_PROFILE=paper` selects the active config. Prevents accidental live-mode activation.
+
+**6D. Logging → structured JSON for production** — Already using structlog, but add: correlation IDs per tick, JSON file rotation (daily, 7-day retention), optional Loki/ELK push.
+
+**6E. Docker packaging** — `Dockerfile` + `docker-compose.yml` with: app container, optional Grafana+Prometheus for metrics. Single `docker compose up` to run paper mode.
+
+**6F. Backtest result versioning** — Each run gets a unique `run_id` (UUID), stored with git commit hash, config snapshot, and CLI args. Enables reproducible comparisons.
+
+### Data Quality
+
+**6G. Interval column in CSVs** — Add `interval` to both `results.csv` and `trades.csv` TRADES_FIELDS. All compare scripts filter by interval.
+
+**6H. Contributing strategies in ensemble trades** — ✅ DONE (this change). `trades.csv` now has `contributing_strategies` column listing which strategies agreed (e.g., `supertrend,bollinger_squeeze`). No more opaque `ensemble_2` label.
+
+**6I. Optuna study metadata in results** — Add `optuna_trials`, `optuna_best_value`, `params_hash` to results CSV so each backtest run records which optimization was used.
+
+### Compare Scripts (Production-Grade)
+
+**6J. Unified compare tool** — Merge `_compare_runs.py`, `_detailed_compare.py`, `_ensemble_compare.py` into a single `compare_backtest.py` with subcommands:
+- `compare_backtest.py runs` — quick baseline vs optimized
+- `compare_backtest.py detailed` — strategy × symbol matrix
+- `compare_backtest.py ensemble` — ensemble analysis with contributing strategies
+- `compare_backtest.py optuna` — Optuna trial analysis (best params, convergence, cross-symbol)
+
+**6K. HTML report generation** — Optional `--html report.html` flag on compare scripts that generates a self-contained HTML report with tables and charts (using Jinja2 templates).
+
+### Files to create/change
+- `app/db.py` — backtest result tables
+- `app/backtest/results_dal.py` — new DAL for backtest persistence
+- `compare_backtest.py` — unified CLI with subcommands
+- `Dockerfile`, `docker-compose.yml` — new
+- `config/paper.env`, `config/live.env` — new profiles

@@ -19,11 +19,11 @@ class BollingerSqueeze(Strategy):
     - Previous candle close was inside the band; current close breaks out.
 
     Stop-loss is placed at the Bollinger mid (20-period SMA).
-    Preferred regimes: range (squeeze resolves), trend_up, trend_down.
+    Preferred regimes: range only - squeeze setups are a ranging-market pattern.
     """
 
     name = "bollinger_squeeze"
-    preferred_regimes = ("range", "trend_up", "trend_down")
+    preferred_regimes = ("range",)
 
     def __init__(self, squeeze_pct: float = 2.0, atr_mult: float = 1.5) -> None:
         """Initialise strategy parameters.

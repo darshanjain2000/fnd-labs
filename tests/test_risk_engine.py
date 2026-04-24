@@ -50,3 +50,17 @@ def test_happy_path_approves_with_qty(make_risk_engine, make_signal):
     e = make_risk_engine()
     d = e.evaluate(make_signal(), lot_size=1)
     assert d.approved and d.qty == 500 and d.reason == "ok"
+
+
+def test_rr_gate_blocks_when_ratio_below_minimum(make_risk_engine, make_signal) -> None:
+    # entry=100, stop=98 (risk=2), target=101 (reward=1) => R:R = 0.5 < 2.0
+    e = make_risk_engine(rr_gate_enabled=True, min_rr_ratio=2.0)
+    d = e.evaluate(make_signal(entry=100.0, stop_loss=98.0, target=101.0), lot_size=1)
+    assert not d.approved and d.reason == "rr_below_minimum"
+
+
+def test_rr_gate_passes_when_ratio_meets_minimum(make_risk_engine, make_signal) -> None:
+    # entry=100, stop=98 (risk=2), target=105 (reward=5) => R:R = 2.5 >= 2.0
+    e = make_risk_engine(rr_gate_enabled=True, min_rr_ratio=2.0)
+    d = e.evaluate(make_signal(entry=100.0, stop_loss=98.0, target=105.0), lot_size=1)
+    assert d.approved and d.reason == "ok"
