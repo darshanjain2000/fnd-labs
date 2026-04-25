@@ -97,6 +97,18 @@ class TradeDAL(BaseRepository):
 
     # ---- writes --------------------------------------------------------
 
+    def update_reason(self, trade_id: int, reason: str | None) -> Trade:
+        """Persist a free-text explanation of why this trade was taken."""
+        with self._session() as session:
+            t = session.get(Trade, trade_id)
+            if t is None:
+                raise TradeNotFoundException(f"trade {trade_id} not found")
+            t.trade_reason = reason
+            session.commit()
+            session.refresh(t)
+            session.expunge(t)
+            return t
+
     def open_with_audit(
         self,
         trade_kwargs: dict[str, Any],

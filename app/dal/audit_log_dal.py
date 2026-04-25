@@ -1,7 +1,7 @@
 """Audit-log repository — all DB access for the ``audit_log`` table."""
 from __future__ import annotations
 
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from app.dal.base import BaseRepository
 from app.models.trade import AuditLog
@@ -19,6 +19,19 @@ class AuditLogDAL(BaseRepository):
         """Return the most recent audit-log events, newest first."""
         with self._session() as session:
             rows = session.query(AuditLog).order_by(desc(AuditLog.at)).limit(limit).all()
+            for r in rows:
+                session.expunge(r)
+            return rows
+
+    def list_by_trade_id(self, trade_id: int) -> list[AuditLog]:
+        """Return all audit events whose payload contains ``trade_id``, oldest first."""
+        with self._session() as session:
+            rows = (
+                session.query(AuditLog)
+                .filter(func.json_extract(AuditLog.payload, "$.trade_id") == trade_id)
+                .order_by(AuditLog.at)
+                .all()
+            )
             for r in rows:
                 session.expunge(r)
             return rows

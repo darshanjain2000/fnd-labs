@@ -26,7 +26,7 @@ from app.models.api.report import ReportBucket, ReportOut, ReportSummary
 from app.models.api.response import ApiResponse
 from app.models.api.scheduler import RunnerStartOut, RunnerStatusOut, RunnerStopOut
 from app.models.api.signal import SignalListOut, SignalOut
-from app.models.api.trade import TradeListOut, TradeOut
+from app.models.api.trade import TradeLifecycleOut, TradeListOut, TradeOut
 
 __all__ = [
     "AngelTotpOut",
@@ -52,6 +52,7 @@ __all__ = [
     "RunnerStopOut",
     "SignalListOut",
     "SignalOut",
+    "TradeLifecycleOut",
     "TradeListOut",
     "TradeOut",
 ]

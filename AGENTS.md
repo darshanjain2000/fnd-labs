@@ -72,6 +72,10 @@ Before posting any code, verify:
 - [ ] No logic duplicated from an existing helper.
 - [ ] `pytest -q` still passes (run it).
 
+### After Coding (Mandatory)
+
+Update required .md file be it AGENTS.md, doc/ARCHITECTURE.md or doc/plan.md with relevent changes along with .env.local as well.
+
 ---
 
 ## 5. Code Style

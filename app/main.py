@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 # When launched as a script (`python app/main.py` from the VS Code debugger),
@@ -12,7 +13,9 @@ if __name__ == "__main__" or __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.core.logging import configure_logging, get_logger
@@ -47,6 +50,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="trading-poc", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(DomainException)
@@ -87,6 +97,11 @@ app.include_router(admin_router)
 app.include_router(config_router)
 app.include_router(runner_router)
 app.include_router(report_router)
+
+
+_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+if os.path.isdir(_FRONTEND_DIR):
+    app.mount("/ui", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
 
 
 @app.get("/")

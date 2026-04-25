@@ -48,6 +48,7 @@ class Trade(Base):
     status: Mapped[str] = mapped_column(String(16), default="OPEN")  # OPEN/CLOSED/CANCELLED
     broker_order_id: Mapped[str | None] = mapped_column(String(64), default=None)
     entry_context: Mapped[dict] = mapped_column(JSON, default=dict)  # indicators at entry
+    trade_reason: Mapped[str | None] = mapped_column(String(2000), default=None)
 
     signal: Mapped["Signal | None"] = relationship(back_populates="trade")
 

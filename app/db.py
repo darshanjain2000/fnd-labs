@@ -23,6 +23,9 @@ _SQLITE_ADDITIONS: dict[str, list[tuple[str, str]]] = {
         ("ai_confidence", "FLOAT"),
         ("ai_source", "VARCHAR(16)"),
     ],
+    "trades": [
+        ("trade_reason", "VARCHAR(2000)"),
+    ],
 }
 
 
