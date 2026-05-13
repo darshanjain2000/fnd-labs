@@ -10,6 +10,7 @@ Usage::
         --trials 50 \\
         --output config/optimized_params.yaml
 """
+
 from __future__ import annotations
 
 import argparse
@@ -139,21 +140,31 @@ def optimize(
     capital: float = 25_000.0,
     lot_size: int = 1,
     risk_pct: float = 1.0,
+    symbol: str | None = None,
+    storage_path: str = "sqlite:///config/optuna_studies.db",
 ) -> dict[str, Any]:
     """Search for optimal hyperparameters using Optuna.
 
     The dataset is split train/OOS at *train_frac*. The objective function
     evaluates the strategy on the OOS portion only (prevents overfitting).
+    Trials are persisted to *storage_path* so re-runs accumulate rather than
+    restart (Walk-Forward warm-starting).
 
     Args:
         strategy_class: Strategy class to optimise (must be in _PARAM_SPACES).
         df: OHLCV DataFrame with indicators. Defaults to synthetic data.
         n_trials: Number of Optuna trials (default 50).
-        metric: Objective metric — "sortino" (default) or "sharpe".
+        metric: Objective metric — "sortino" (default), "sharpe", or "win_rate".
         train_frac: Fraction of data used as training window (OOS = 1-train_frac).
         capital: Starting capital in INR.
         lot_size: F&O lot size.
         risk_pct: Per-trade risk percentage.
+        symbol: NSE symbol used to scope the Optuna study name. When provided
+            the study is named ``"{strategy}__{symbol}"`` so different symbols
+            maintain independent trial histories.
+        storage_path: SQLAlchemy URL for the Optuna study store. Defaults to
+            a SQLite file at ``config/optuna_studies.db`` (relative to cwd).
+            Set to ``None`` to fall back to in-memory (testing only).
 
     Returns:
         Dict with "best_params", "best_value", and "strategy" keys.
@@ -198,9 +209,21 @@ def optimize(
         if not results or not results[0].trades:
             return -999.0
         r = results[0]
+        # Require a meaningful sample size for any metric to avoid
+        # overfitting to 1-3 lucky trades.
+        if len(r.trades) < 10:
+            return -999.0
+        if metric == "win_rate":
+            return r.win_rate
         return r.sortino if metric == "sortino" else r.sharpe
 
-    study = optuna.create_study(direction="maximize")
+    study_name = f"{strat_name}__{symbol}" if symbol else strat_name
+    study = optuna.create_study(
+        direction="maximize",
+        storage=storage_path,
+        study_name=study_name,
+        load_if_exists=True,
+    )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     best = study.best_trial
@@ -241,38 +264,54 @@ def save_params(results: list[dict[str, Any]], path: str) -> None:
     else:
         with open(path, "w") as fh:
             json.dump(results, fh, indent=2)
-    log.info("optuna_params_saved", path=path, strategies=[r["strategy"] for r in results])
+    log.info(
+        "optuna_params_saved", path=path, strategies=[r["strategy"] for r in results]
+    )
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def _main() -> None:
     """CLI: ``python -m app.backtest.optimize``."""
     from app.strategies import ALL_STRATEGIES
 
-    parser = argparse.ArgumentParser(description="Optimise strategy hyperparameters with Optuna.")
+    parser = argparse.ArgumentParser(
+        description="Optimise strategy hyperparameters with Optuna."
+    )
     parser.add_argument("--strategy", default="all")
     parser.add_argument("--trials", type=int, default=50)
-    parser.add_argument("--metric", default="sortino", choices=["sortino", "sharpe"])
+    parser.add_argument(
+        "--metric", default="sortino", choices=["sortino", "sharpe", "win_rate"]
+    )
     parser.add_argument("--output", default="config/optimized_params.yaml")
     parser.add_argument("--capital", type=float, default=25_000.0)
     parser.add_argument("--risk-pct", type=float, default=1.0)
     parser.add_argument(
-        "--symbol", default=None,
+        "--symbol",
+        default=None,
         help="NSE symbol (e.g. NIFTY). When provided with --from/--to, uses real data.",
     )
     parser.add_argument(
-        "--from", dest="from_date", default=None,
+        "--from",
+        dest="from_date",
+        default=None,
         help="Start date YYYY-MM-DD (uses Angel API for real data).",
     )
     parser.add_argument(
-        "--to", dest="to_date", default=None,
+        "--to",
+        dest="to_date",
+        default=None,
         help="End date YYYY-MM-DD (uses Angel API for real data).",
     )
-    parser.add_argument("--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m)")
-    parser.add_argument("--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)")
+    parser.add_argument(
+        "--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m)"
+    )
+    parser.add_argument(
+        "--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)"
+    )
     args = parser.parse_args()
 
     target_classes = (
@@ -281,7 +320,7 @@ def _main() -> None:
         else [cls for cls in ALL_STRATEGIES if cls.name == args.strategy]
     )
     if not target_classes:
-        print(f"Strategy '{args.strategy}' not found or has no search space.")
+        log.error("optimize_strategy_not_found", requested=args.strategy)
         return
 
     # Load data: real from Angel API or synthetic
@@ -294,8 +333,11 @@ def _main() -> None:
             interval=args.interval,
         )
         df = _fetch_real_data(
-            args.symbol, args.exchange, args.interval,
-            args.from_date, args.to_date,
+            args.symbol,
+            args.exchange,
+            args.interval,
+            args.from_date,
+            args.to_date,
         )
     else:
         log.info("optimize_using_synthetic_data")
@@ -304,14 +346,20 @@ def _main() -> None:
     all_results: list[dict[str, Any]] = []
     for cls in target_classes:
         result = optimize(
-            cls, df=df, n_trials=args.trials, metric=args.metric,
-            capital=args.capital, risk_pct=args.risk_pct,
+            cls,
+            df=df,
+            n_trials=args.trials,
+            metric=args.metric,
+            capital=args.capital,
+            risk_pct=args.risk_pct,
+            symbol=args.symbol,
         )
         all_results.append(result)
-        print(result)
+        log.info("optimize_result", result=result)
 
     if args.output:
         import os
+
         os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
         save_params(all_results, args.output)
 

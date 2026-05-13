@@ -23,6 +23,7 @@ Usage::
     params = load_params_for_symbol("NIFTY")
     # {"rsi_reversal": {"atr_mult": 1.8, ...}, "ema_breakout": {...}, ...}
 """
+
 from __future__ import annotations
 
 import json
@@ -75,7 +76,12 @@ def load_params_for_symbol(symbol: str) -> dict[str, dict[str, Any]]:
         with path.open() as fh:
             raw = json.load(fh)
     except Exception as exc:
-        log.warning("optimized_params_load_failed", symbol=symbol, path=str(path), error=str(exc))
+        log.warning(
+            "optimized_params_load_failed",
+            symbol=symbol,
+            path=str(path),
+            error=str(exc),
+        )
         return {}
 
     result: dict[str, dict[str, Any]] = {}
@@ -84,7 +90,9 @@ def load_params_for_symbol(symbol: str) -> dict[str, dict[str, Any]]:
             params = entry.get("best_params") or entry
             # Strip non-param metadata keys
             result[strategy_name] = {
-                k: v for k, v in params.items() if k not in ("best_value", "metric", "strategy")
+                k: v
+                for k, v in params.items()
+                if k not in ("best_value", "metric", "strategy")
             }
     log.info("optimized_params_loaded", symbol=symbol, strategies=list(result.keys()))
     return result

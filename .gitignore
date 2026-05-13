@@ -23,6 +23,7 @@ env/
 # .vscode/
 .idea/
 *.swp
+graphify-out
 
 # Testing / coverage
 .pytest_cache/

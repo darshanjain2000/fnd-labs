@@ -1,0 +1,28 @@
+macd_divergence:
+  best_params:
+    atr_mult: 2.1219596142080257
+    reward_ratio: 2.237789480436483
+  best_value: 15.5883
+  metric: sortino
+  strategy: macd_divergence
+orb_breakout:
+  best_params:
+    orb_minutes: 42
+  best_value: 1.3347
+  metric: sortino
+  strategy: orb_breakout
+rsi_reversal:
+  best_params:
+    atr_mult: 1.662089829017311
+    overbought: 74.18932134150269
+    oversold: 27.88694789166051
+  best_value: 44.5627
+  metric: sortino
+  strategy: rsi_reversal
+vwap_pullback:
+  best_params:
+    atr_mult: 2.117317869762833
+    tolerance_pct: 0.13433795708655377
+  best_value: 283798101.8321
+  metric: sortino
+  strategy: vwap_pullback

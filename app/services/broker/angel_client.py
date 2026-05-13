@@ -15,6 +15,7 @@ Dependencies (only installed when going live):
 Settings used:
     ANGEL_API_KEY, ANGEL_CLIENT_CODE, ANGEL_PIN, ANGEL_TOTP_SECRET
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -43,7 +44,8 @@ class AngelBroker(Broker):
     def __init__(self, smart_connect: Any | None = None) -> None:
         s = get_settings()
         missing = [
-            k for k, v in {
+            k
+            for k, v in {
                 "ANGEL_API_KEY": s.angel_api_key,
                 "ANGEL_CLIENT_CODE": s.angel_client_code,
                 "ANGEL_PIN": s.angel_pin,
@@ -114,10 +116,22 @@ class AngelBroker(Broker):
         except Exception as e:
             log.warning("angel_order_failed", error=str(e), symbol=req.symbol)
             return OrderResult(
-                order_id="", status="REJECTED", avg_price=0.0, filled_qty=0, message=str(e)
+                order_id="",
+                status="REJECTED",
+                avg_price=0.0,
+                filled_qty=0,
+                message=str(e),
             )
-        log.info("angel_order_placed", order_id=order_id, symbol=req.symbol, side=req.side, qty=req.qty)
-        return OrderResult(order_id=str(order_id), status="OPEN", avg_price=0.0, filled_qty=0)
+        log.info(
+            "angel_order_placed",
+            order_id=order_id,
+            symbol=req.symbol,
+            side=req.side,
+            qty=req.qty,
+        )
+        return OrderResult(
+            order_id=str(order_id), status="OPEN", avg_price=0.0, filled_qty=0
+        )
 
     def cancel_order(self, order_id: str) -> bool:
         try:
@@ -136,7 +150,11 @@ class AngelBroker(Broker):
     def profile(self) -> dict[str, Any]:
         """Lightweight health check: returns Angel profile payload."""
         try:
-            p = self._api.getProfile(refreshToken=None) if hasattr(self._api, "getProfile") else {}
+            p = (
+                self._api.getProfile(refreshToken=None)
+                if hasattr(self._api, "getProfile")
+                else {}
+            )
             return {"ok": True, "client_code": self._client_code, "profile": p}
         except Exception as e:
             return {"ok": False, "error": str(e)}

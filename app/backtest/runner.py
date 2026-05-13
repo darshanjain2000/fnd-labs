@@ -16,20 +16,32 @@ Or from Python::
     result = run_backtest(df, strategies=[EMABreakout()], capital=25_000)
     print(result.summary())
 """
+
 from __future__ import annotations
 
 import argparse
 import math
+import time
+from collections import deque
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
+from types import MethodType
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from app.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.engine.orchestrator import Orchestrator
+from app.engine.risk_engine import RiskEngine
 from app.engine.risk_engine import position_size
+from app.services.broker.base import OrderRequest, OrderResult
+from app.services.broker.paper_broker import PaperBroker
+from app.services.execution_service import ExecutionService
 from app.services.market_data import compute_indicators
+from app.services.signal_service import SignalService
+from app.services.validation_service import ValidationService
 from app.strategies.base import Signal, Strategy
 
 log = get_logger(__name__)
@@ -53,6 +65,7 @@ class TradeRecord:
     pnl: float
     bars_held: int
     exit_reason: str  # "target" | "stop" | "trailing" | "eod"
+    contributing_strategies: str = ""  # comma-separated names for ensemble trades
 
 
 @dataclass
@@ -127,7 +140,6 @@ def _compute_metrics(
     win_rate = wins / len(pnls)
 
     # Build daily equity curve
-    n_days = max(1, (df.index[-1] - df.index[0]).days if isinstance(df.index, pd.DatetimeIndex) else 252)
     cumulative = np.cumsum(pnls)
     equity = capital + cumulative
 
@@ -139,10 +151,13 @@ def _compute_metrics(
     mean_r = float(np.mean(daily_returns))
     std_r = float(np.std(daily_returns, ddof=1)) if len(daily_returns) > 1 else 1e-9
     sharpe = mean_r / std_r * math.sqrt(252) if std_r > 0 else 0.0
+    # Clamp to prevent infinity from tiny denominators (e.g. 1-trade sets)
+    sharpe = max(-1000.0, min(1000.0, sharpe))
 
     downside = daily_returns[daily_returns < 0]
     std_down = float(np.std(downside, ddof=1)) if len(downside) > 1 else 1e-9
     sortino = mean_r / std_down * math.sqrt(252) if std_down > 0 else 0.0
+    sortino = max(-1000.0, min(1000.0, sortino))
 
     # Maximum drawdown
     peak = np.maximum.accumulate(equity)
@@ -150,6 +165,261 @@ def _compute_metrics(
     max_drawdown_pct = float(abs(drawdowns.min())) if len(drawdowns) > 0 else 0.0
 
     return win_rate, sharpe, sortino, max_drawdown_pct
+
+
+def _pick_ensemble_signal(
+    signals: list[Signal],
+    min_agreement: int,
+    min_confidence: float,
+) -> tuple[Signal | None, list[str]]:
+    """Apply ensemble conviction filter to signals from multiple strategies.
+
+    Mirrors the live ``select_best_signal`` logic from the orchestrator so the
+    backtest faithfully simulates the ensemble pipeline.
+
+    Args:
+        signals: All signals fired at a single bar across strategies.
+        min_agreement: Minimum strategies on the same side to take a trade.
+        min_confidence: Drop signals below this confidence threshold.
+
+    Returns:
+        Tuple of (best_signal_or_None, list_of_contributing_strategy_names).
+    """
+    strong = [s for s in signals if s.confidence >= min_confidence]
+    if not strong:
+        return None, []
+
+    by_side: dict[str, list[Signal]] = {}
+    for s in strong:
+        by_side.setdefault(s.side, []).append(s)
+
+    def _avg_conf(sigs: list[Signal]) -> float:
+        """Mean confidence for a list of signals."""
+        return sum(s.confidence for s in sigs) / len(sigs)
+
+    best_side = max(
+        by_side,
+        key=lambda side: (len(by_side[side]), _avg_conf(by_side[side])),
+    )
+    if len(by_side[best_side]) < min_agreement:
+        return None, []
+
+    contributors = sorted(s.strategy for s in by_side[best_side])
+    best = max(by_side[best_side], key=lambda s: s.confidence)
+    return best, contributors
+
+
+def _passes_rr_gate(signal: Signal, settings: Settings) -> bool:
+    """Return True when the signal passes the configured reward-to-risk gate.
+
+    Args:
+        signal: Candidate signal to validate.
+        settings: Active backtest settings.
+
+    Returns:
+        True if the gate is disabled, or if reward/risk meets threshold.
+    """
+    if not settings.rr_gate_enabled or signal.target is None:
+        return True
+    risk_per_unit = abs(signal.entry - signal.stop_loss)
+    if risk_per_unit <= 0:
+        return False
+    reward = abs(signal.target - signal.entry)
+    return (reward / risk_per_unit) >= settings.min_rr_ratio
+
+
+def _simulate_trade(
+    bar_index: int,
+    df: pd.DataFrame,
+    open_trade: dict,
+    trailing_atr_mult: float,
+    slip_factor: float,
+    brokerage_per_rt: float,
+    symbol: str,
+    strategy_name: str,
+) -> tuple[TradeRecord | None, dict | None]:
+    """Check an open trade for exit on the current bar.
+
+    Handles stop-loss, target, and ATR trailing-stop logic. Returns a
+    completed TradeRecord if the trade closed, or None if it remains open.
+
+    Args:
+        bar_index: Integer index into *df* for the current bar.
+        df: Full OHLCV DataFrame with indicators.
+        open_trade: Dict with trade state (side, entry, stop, target, qty, bar).
+        trailing_atr_mult: ATR trailing multiplier (0 = disabled).
+        slip_factor: One-way slippage as a decimal fraction.
+        brokerage_per_rt: Round-trip brokerage cost in INR.
+        symbol: Trading symbol name.
+        strategy_name: Strategy that originated the trade.
+
+    Returns:
+        Tuple of (TradeRecord | None, updated_open_trade | None).
+        If the trade closed, open_trade is None.
+    """
+    bar = df.iloc[bar_index]
+    bar_high = float(bar["high"])
+    bar_low = float(bar["low"])
+    bar_close = float(bar["close"])
+
+    exit_price: float | None = None
+    exit_reason = "eod"
+
+    if open_trade["side"] == "BUY":
+        if bar_low <= open_trade["stop"]:
+            exit_price = open_trade["stop"]
+            exit_reason = "trailing" if open_trade.get("trailed") else "stop"
+        elif open_trade["target"] and bar_high >= open_trade["target"]:
+            exit_price = open_trade["target"]
+            exit_reason = "target"
+    else:  # SELL
+        if bar_high >= open_trade["stop"]:
+            exit_price = open_trade["stop"]
+            exit_reason = "trailing" if open_trade.get("trailed") else "stop"
+        elif open_trade["target"] and bar_low <= open_trade["target"]:
+            exit_price = open_trade["target"]
+            exit_reason = "target"
+
+    # ATR trailing stop update
+    if exit_price is None and trailing_atr_mult > 0 and "atr14" in df.columns:
+        atr_val = float(bar.get("atr14", 0.0))
+        if atr_val > 0:
+            trail_dist = atr_val * trailing_atr_mult
+            if open_trade["side"] == "BUY":
+                new_stop = bar_close - trail_dist
+                if new_stop > open_trade["stop"]:
+                    open_trade["stop"] = round(new_stop, 2)
+                    open_trade["trailed"] = True
+            else:
+                new_stop = bar_close + trail_dist
+                if new_stop < open_trade["stop"]:
+                    open_trade["stop"] = round(new_stop, 2)
+                    open_trade["trailed"] = True
+
+    if exit_price is not None:
+        qty = open_trade["qty"]
+        raw_pnl = (
+            (exit_price - open_trade["entry"]) * qty
+            if open_trade["side"] == "BUY"
+            else (open_trade["entry"] - exit_price) * qty
+        )
+        slippage_cost = exit_price * slip_factor * qty
+        net_pnl = raw_pnl - slippage_cost - brokerage_per_rt / 2
+        record = TradeRecord(
+            symbol=symbol,
+            strategy=strategy_name,
+            side=open_trade["side"],
+            entry=open_trade["entry"],
+            exit=exit_price,
+            stop_loss=open_trade["stop"],
+            target=open_trade["target"],
+            qty=qty,
+            pnl=round(net_pnl, 2),
+            bars_held=bar_index - open_trade["bar"],
+            exit_reason=exit_reason,
+            contributing_strategies=open_trade.get("contributors", ""),
+        )
+        return record, None
+
+    return None, open_trade
+
+
+def _close_eod(
+    df: pd.DataFrame,
+    open_trade: dict,
+    slip_factor: float,
+    brokerage_per_rt: float,
+    symbol: str,
+    strategy_name: str,
+) -> TradeRecord:
+    """Force-close an open trade at the last bar's close price.
+
+    Args:
+        df: Full OHLCV DataFrame.
+        open_trade: Dict with trade state.
+        slip_factor: One-way slippage as a decimal fraction.
+        brokerage_per_rt: Round-trip brokerage cost in INR.
+        symbol: Trading symbol name.
+        strategy_name: Strategy that originated the trade.
+
+    Returns:
+        Completed TradeRecord.
+    """
+    last_close = float(df.iloc[-1]["close"])
+    qty = open_trade["qty"]
+    raw_pnl = (
+        (last_close - open_trade["entry"]) * qty
+        if open_trade["side"] == "BUY"
+        else (open_trade["entry"] - last_close) * qty
+    )
+    slippage_cost = last_close * slip_factor * qty
+    net_pnl = raw_pnl - slippage_cost - brokerage_per_rt / 2
+    return TradeRecord(
+        symbol=symbol,
+        strategy=strategy_name,
+        side=open_trade["side"],
+        entry=open_trade["entry"],
+        exit=last_close,
+        stop_loss=open_trade["stop"],
+        target=open_trade["target"],
+        qty=qty,
+        pnl=round(net_pnl, 2),
+        bars_held=len(df) - 1 - open_trade["bar"],
+        exit_reason="eod",
+        contributing_strategies=open_trade.get("contributors", ""),
+    )
+
+
+def _build_result(
+    symbol: str,
+    strategy_name: str,
+    trades: list[TradeRecord],
+    capital: float,
+    df: pd.DataFrame,
+) -> BacktestResult:
+    """Build a BacktestResult from completed trades.
+
+    Args:
+        symbol: Trading symbol.
+        strategy_name: Strategy name for the result.
+        trades: List of completed trade records.
+        capital: Starting capital in INR.
+        df: OHLCV DataFrame (used for date range).
+
+    Returns:
+        Populated BacktestResult.
+    """
+    win_rate, sharpe, sortino, max_dd = _compute_metrics(trades, capital, df)
+    total_pnl = float(sum(t.pnl for t in trades))
+    from_date = df.index[0].date() if isinstance(df.index, pd.DatetimeIndex) else None
+    to_date = df.index[-1].date() if isinstance(df.index, pd.DatetimeIndex) else None
+
+    result = BacktestResult(
+        symbol=symbol,
+        strategy=strategy_name,
+        trades=trades,
+        capital_start=capital,
+        capital_end=round(capital + total_pnl, 2),
+        total_pnl=round(total_pnl, 2),
+        win_rate=win_rate,
+        sharpe=sharpe,
+        sortino=sortino,
+        max_drawdown_pct=max_dd,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    log.info(
+        "backtest_done",
+        strategy=strategy_name,
+        symbol=symbol,
+        trades=len(trades),
+        pnl=total_pnl,
+        sharpe=sharpe,
+        win_rate=win_rate,
+        from_date=str(from_date),
+        to_date=str(to_date),
+    )
+    return result
 
 
 def run_backtest(
@@ -162,6 +432,7 @@ def run_backtest(
     slippage_bps: float = 4.0,
     brokerage_per_rt: float = 40.0,
     trailing_atr_mult: float = 0.0,
+    settings: Settings | None = None,
 ) -> list[BacktestResult]:
     """Run an event-driven backtest for each strategy independently.
 
@@ -183,6 +454,7 @@ def run_backtest(
         brokerage_per_rt: Round-trip brokerage cost in INR.
         trailing_atr_mult: If > 0, use ATR-based trailing stop (e.g. 1.5 = 1.5x ATR).
             Stop ratchets in the direction of profit each bar. Set 0 to disable.
+        settings: Optional settings object. Defaults to runtime ``get_settings()``.
 
     Returns:
         One BacktestResult per strategy.
@@ -191,6 +463,7 @@ def run_backtest(
     if "rsi" not in df.columns:
         df = compute_indicators(df)
 
+    s = settings or get_settings()
     slip_factor = slippage_bps / 10_000.0
 
     results: list[BacktestResult] = []
@@ -199,160 +472,493 @@ def run_backtest(
         trades: list[TradeRecord] = []
         open_trade: dict | None = None
         current_capital = capital
+        last_signal_bar: int | None = None
+        signal_service = SignalService(strategies=[strat], settings=s)
 
         for i in range(_WARMUP_BARS, len(df)):
             bar = df.iloc[i]
-            bar_high = float(bar["high"])
-            bar_low = float(bar["low"])
             bar_close = float(bar["close"])
 
             # -- Check open trade for exit --
             if open_trade is not None:
-                exit_price: float | None = None
-                exit_reason = "eod"
-
-                if open_trade["side"] == "BUY":
-                    if bar_low <= open_trade["stop"]:
-                        exit_price = open_trade["stop"]
-                        exit_reason = "trailing" if open_trade.get("trailed") else "stop"
-                    elif open_trade["target"] and bar_high >= open_trade["target"]:
-                        exit_price = open_trade["target"]
-                        exit_reason = "target"
-                else:  # SELL
-                    if bar_high >= open_trade["stop"]:
-                        exit_price = open_trade["stop"]
-                        exit_reason = "trailing" if open_trade.get("trailed") else "stop"
-                    elif open_trade["target"] and bar_low <= open_trade["target"]:
-                        exit_price = open_trade["target"]
-                        exit_reason = "target"
-
-                # -- ATR trailing stop update --
-                if exit_price is None and trailing_atr_mult > 0 and "atr14" in df.columns:
-                    atr_val = float(bar.get("atr14", 0.0))
-                    if atr_val > 0:
-                        trail_dist = atr_val * trailing_atr_mult
-                        if open_trade["side"] == "BUY":
-                            new_stop = bar_close - trail_dist
-                            if new_stop > open_trade["stop"]:
-                                open_trade["stop"] = round(new_stop, 2)
-                                open_trade["trailed"] = True
-                        else:
-                            new_stop = bar_close + trail_dist
-                            if new_stop < open_trade["stop"]:
-                                open_trade["stop"] = round(new_stop, 2)
-                                open_trade["trailed"] = True
-
-                if exit_price is not None:
-                    qty = open_trade["qty"]
-                    raw_pnl = (
-                        (exit_price - open_trade["entry"]) * qty
-                        if open_trade["side"] == "BUY"
-                        else (open_trade["entry"] - exit_price) * qty
-                    )
-                    slippage_cost = exit_price * slip_factor * qty
-                    net_pnl = raw_pnl - slippage_cost - brokerage_per_rt / 2
-                    current_capital += net_pnl
-                    trades.append(
-                        TradeRecord(
-                            symbol=symbol,
-                            strategy=strat.name,
-                            side=open_trade["side"],
-                            entry=open_trade["entry"],
-                            exit=exit_price,
-                            stop_loss=open_trade["stop"],
-                            target=open_trade["target"],
-                            qty=qty,
-                            pnl=round(net_pnl, 2),
-                            bars_held=i - open_trade["bar"],
-                            exit_reason=exit_reason,
-                        )
-                    )
-                    open_trade = None
+                record, open_trade = _simulate_trade(
+                    i,
+                    df,
+                    open_trade,
+                    trailing_atr_mult,
+                    slip_factor,
+                    brokerage_per_rt,
+                    symbol,
+                    strat.name,
+                )
+                if record is not None:
+                    current_capital += record.pnl
+                    trades.append(record)
 
             # -- Try to enter if no open trade --
             if open_trade is None:
-                window = df.iloc[: i + 1]
-                try:
-                    sig = strat.evaluate(symbol, window)
-                except Exception:  # strategy must not raise in backtest either
+                if (
+                    last_signal_bar is not None
+                    and s.signal_cooldown_ticks > 0
+                    and (i - last_signal_bar) < s.signal_cooldown_ticks
+                ):
                     continue
-                if sig is not None:
-                    entry = float(bar["close"])
-                    entry_with_slip = (
-                        entry * (1 + slip_factor) if sig.side == "BUY" else entry * (1 - slip_factor)
-                    )
-                    qty = position_size(current_capital, risk_pct, entry_with_slip, sig.stop_loss, lot_size)
-                    if qty >= 1:
-                        open_trade = {
-                            "side": sig.side,
-                            "entry": round(entry_with_slip, 2),
-                            "stop": sig.stop_loss,
-                            "target": sig.target,
-                            "qty": qty,
-                            "bar": i,
-                        }
+
+                window = df.iloc[: i + 1]
+                signals = signal_service.generate(symbol, window)
+                if not signals:
+                    continue
+
+                sig = max(signals, key=lambda candidate: candidate.confidence)
+                if not _passes_rr_gate(sig, s):
+                    continue
+
+                entry = bar_close
+                entry_with_slip = (
+                    entry * (1 + slip_factor)
+                    if sig.side == "BUY"
+                    else entry * (1 - slip_factor)
+                )
+                qty = position_size(
+                    current_capital, risk_pct, entry_with_slip, sig.stop_loss, lot_size
+                )
+                if qty >= 1:
+                    open_trade = {
+                        "side": sig.side,
+                        "entry": round(entry_with_slip, 2),
+                        "stop": sig.stop_loss,
+                        "target": sig.target,
+                        "qty": qty,
+                        "bar": i,
+                    }
+                    last_signal_bar = i
 
         # Close any still-open position at EOD
         if open_trade is not None:
-            last_close = float(df.iloc[-1]["close"])
-            qty = open_trade["qty"]
-            raw_pnl = (
-                (last_close - open_trade["entry"]) * qty
-                if open_trade["side"] == "BUY"
-                else (open_trade["entry"] - last_close) * qty
+            record = _close_eod(
+                df, open_trade, slip_factor, brokerage_per_rt, symbol, strat.name
             )
-            slippage_cost = last_close * slip_factor * qty
-            net_pnl = raw_pnl - slippage_cost - brokerage_per_rt / 2
-            current_capital += net_pnl
-            trades.append(
-                TradeRecord(
-                    symbol=symbol,
-                    strategy=strat.name,
-                    side=open_trade["side"],
-                    entry=open_trade["entry"],
-                    exit=last_close,
-                    stop_loss=open_trade["stop"],
-                    target=open_trade["target"],
-                    qty=qty,
-                    pnl=round(net_pnl, 2),
-                    bars_held=len(df) - 1 - open_trade["bar"],
-                    exit_reason="eod",
-                )
-            )
+            current_capital += record.pnl
+            trades.append(record)
 
-        win_rate, sharpe, sortino, max_dd = _compute_metrics(trades, capital, df)
-        total_pnl = sum(t.pnl for t in trades)
-        from_date = df.index[0].date() if isinstance(df.index, pd.DatetimeIndex) else None
-        to_date = df.index[-1].date() if isinstance(df.index, pd.DatetimeIndex) else None
-
-        result = BacktestResult(
-            symbol=symbol,
-            strategy=strat.name,
-            trades=trades,
-            capital_start=capital,
-            capital_end=round(capital + total_pnl, 2),
-            total_pnl=round(total_pnl, 2),
-            win_rate=win_rate,
-            sharpe=sharpe,
-            sortino=sortino,
-            max_drawdown_pct=max_dd,
-            from_date=from_date,
-            to_date=to_date,
-        )
-        log.info(
-            "backtest_done",
-            strategy=strat.name,
-            symbol=symbol,
-            trades=len(trades),
-            pnl=total_pnl,
-            sharpe=sharpe,
-            win_rate=win_rate,
-            from_date=str(from_date),
-            to_date=str(to_date),
-        )
-        results.append(result)
+        results.append(_build_result(symbol, strat.name, trades, capital, df))
 
     return results
+
+
+def run_ensemble_backtest(
+    df: pd.DataFrame,
+    strategies: list[Strategy],
+    symbol: str = "BACKTEST",
+    capital: float = 25_000.0,
+    lot_size: int = 1,
+    risk_pct: float = 1.0,
+    slippage_bps: float = 4.0,
+    brokerage_per_rt: float = 40.0,
+    trailing_atr_mult: float = 0.0,
+    min_agreement: int = 2,
+    min_confidence: float = 0.5,
+    settings: Settings | None = None,
+) -> BacktestResult:
+    """Run an ensemble backtest: all strategies evaluated each bar, trade only on agreement.
+
+    Simulates the live pipeline's conviction filter. At each bar, all strategies
+    are evaluated. A trade is opened only when ``min_agreement`` or more
+    strategies fire on the same side with confidence >= ``min_confidence``.
+    The highest-confidence signal from the majority side is used for entry.
+    When ``settings.signal_memory_ticks > 1``, recent signals are merged across
+    bars (keeping the latest per strategy) before conviction is evaluated.
+
+    Args:
+        df: OHLCV DataFrame with pre-computed indicators.
+        strategies: List of Strategy instances to evaluate each bar.
+        symbol: Symbol name used in trade records.
+        capital: Starting capital in INR.
+        lot_size: F&O lot size.
+        risk_pct: Maximum per-trade risk as a percentage of capital.
+        slippage_bps: One-way slippage in basis points.
+        brokerage_per_rt: Round-trip brokerage cost in INR.
+        trailing_atr_mult: ATR trailing stop multiplier (0 = disabled).
+        min_agreement: Minimum strategies on the same side to enter.
+        min_confidence: Drop signals below this confidence threshold.
+        settings: Optional settings object. Defaults to runtime ``get_settings()``.
+
+    Returns:
+        A single BacktestResult labelled ``"ensemble_N"`` where N is min_agreement.
+    """
+    if "rsi" not in df.columns:
+        df = compute_indicators(df)
+
+    s = settings or get_settings()
+    slip_factor = slippage_bps / 10_000.0
+    strategy_name = f"ensemble_{min_agreement}"
+    signal_service = SignalService(strategies=strategies, settings=s)
+
+    trades: list[TradeRecord] = []
+    open_trade: dict | None = None
+    current_capital = capital
+    last_signal_bar: int | None = None
+    signal_buffer: deque[tuple[int, Signal]] = deque()
+
+    for i in range(_WARMUP_BARS, len(df)):
+        bar = df.iloc[i]
+        bar_close = float(bar["close"])
+
+        # -- Check open trade for exit --
+        if open_trade is not None:
+            record, open_trade = _simulate_trade(
+                i,
+                df,
+                open_trade,
+                trailing_atr_mult,
+                slip_factor,
+                brokerage_per_rt,
+                symbol,
+                strategy_name,
+            )
+            if record is not None:
+                current_capital += record.pnl
+                trades.append(record)
+
+        # -- Try to enter: evaluate ALL strategies, apply conviction filter --
+        if open_trade is None:
+            if (
+                last_signal_bar is not None
+                and s.signal_cooldown_ticks > 0
+                and (i - last_signal_bar) < s.signal_cooldown_ticks
+            ):
+                continue
+
+            window = df.iloc[: i + 1]
+            bar_signals = signal_service.generate(symbol, window)
+
+            if s.signal_memory_ticks > 1:
+                for sig in bar_signals:
+                    signal_buffer.append((i, sig))
+
+                cutoff = i - s.signal_memory_ticks
+                while signal_buffer and signal_buffer[0][0] <= cutoff:
+                    signal_buffer.popleft()
+
+                latest_by_strategy: dict[str, Signal] = {}
+                for _tick, sig in signal_buffer:
+                    latest_by_strategy[sig.strategy] = sig
+                eval_signals = list(latest_by_strategy.values())
+            else:
+                eval_signals = bar_signals
+
+            best, contributors = _pick_ensemble_signal(
+                eval_signals,
+                min_agreement,
+                min_confidence,
+            )
+            if best is not None and _passes_rr_gate(best, s):
+                entry = bar_close
+                entry_with_slip = (
+                    entry * (1 + slip_factor)
+                    if best.side == "BUY"
+                    else entry * (1 - slip_factor)
+                )
+                qty = position_size(
+                    current_capital,
+                    risk_pct,
+                    entry_with_slip,
+                    best.stop_loss,
+                    lot_size,
+                )
+                if qty >= 1:
+                    open_trade = {
+                        "side": best.side,
+                        "entry": round(entry_with_slip, 2),
+                        "stop": best.stop_loss,
+                        "target": best.target,
+                        "qty": qty,
+                        "bar": i,
+                        "contributors": ",".join(contributors),
+                    }
+                    last_signal_bar = i
+
+    # Close any still-open position at EOD
+    if open_trade is not None:
+        record = _close_eod(
+            df, open_trade, slip_factor, brokerage_per_rt, symbol, strategy_name
+        )
+        current_capital += record.pnl
+        trades.append(record)
+
+    log.info(
+        "ensemble_backtest_done",
+        symbol=symbol,
+        min_agreement=min_agreement,
+        strategies=len(strategies),
+        trades=len(trades),
+    )
+    return _build_result(symbol, strategy_name, trades, capital, df)
+
+
+class _NoOpMemory:
+    """Backtest memory adapter that intentionally returns no context."""
+
+    def format_context(
+        self,
+        symbol: str,
+        strategy: str | None,
+        side: str | None,
+        k: int = 5,
+    ) -> list[str]:
+        """Return an empty context list for LLM validation.
+
+        Args:
+            symbol: Trading symbol.
+            strategy: Strategy name.
+            side: BUY/SELL side.
+            k: Maximum context rows requested.
+
+        Returns:
+            Empty list.
+        """
+        return []
+
+
+class _NoOpRag:
+    """Backtest RAG adapter that intentionally returns no documents."""
+
+    def query_similar(self, query: str, k: int = 5) -> list[str]:
+        """Return no RAG matches.
+
+        Args:
+            query: Search query.
+            k: Maximum number of docs requested.
+
+        Returns:
+            Empty list.
+        """
+        return []
+
+
+class _BacktestExecutionAdapter(ExecutionService):
+    """Simulation-only execution service that avoids DB writes.
+
+    The orchestrator still calls ``execute`` as in live mode, but this adapter
+    only returns a synthetic broker fill result and does not persist trades.
+    """
+
+    def __init__(self, broker: PaperBroker) -> None:
+        """Store the in-memory paper broker.
+
+        Args:
+            broker: Paper broker used for simulated fills.
+        """
+        self.broker = broker
+
+    def execute(
+        self,
+        signal: Signal,
+        qty: int,
+        signal_row_id: int | None = None,
+    ) -> OrderResult:
+        """Simulate an entry fill without any persistence side effects.
+
+        Args:
+            signal: Signal chosen by orchestrator.
+            qty: Position size.
+            signal_row_id: Unused in simulation mode.
+
+        Returns:
+            Simulated entry fill from ``PaperBroker``.
+        """
+        req = OrderRequest(
+            symbol=signal.symbol,
+            side=signal.side,
+            qty=qty,
+            order_type="MARKET",
+            product="MIS",
+            tag=f"bt-{signal.strategy[:16]}",
+        )
+        return self.broker.place_order(req)
+
+
+def run_orchestrator_parity_backtest(
+    df: pd.DataFrame,
+    symbol: str = "BACKTEST",
+    capital: float = 25_000.0,
+    lot_size: int = 1,
+    trailing_atr_mult: float = 0.0,
+    settings: Settings | None = None,
+    is_expiry_day: bool = False,
+) -> BacktestResult:
+    """Run a high-fidelity backtest through orchestrator decision flow.
+
+    This mode mirrors ``main.py`` pipeline ordering for entry decisions:
+    SignalService -> conviction selection -> ValidationService -> RiskEngine ->
+    ExecutionService (simulated). Exits are still resolved on historical bars
+    via stop/target checks in the backtest engine.
+
+    Args:
+        df: OHLCV DataFrame (raw or indicator-enriched).
+        symbol: Trading symbol.
+        capital: Starting capital.
+        lot_size: Lot-size constraint used by risk sizing.
+        trailing_atr_mult: ATR trailing-stop multiplier.
+        settings: Optional settings override.
+        is_expiry_day: Whether expiry-day risk blocking should apply.
+
+    Returns:
+        BacktestResult with strategy name ``orchestrator_parity``.
+    """
+    if "rsi" not in df.columns:
+        df = compute_indicators(df)
+
+    s = settings or get_settings()
+    quote_by_symbol: dict[str, float] = {symbol: float(df.iloc[_WARMUP_BARS]["close"])}
+
+    def _quote_fn(sym: str) -> float:
+        """Return latest backtest price for ``sym``.
+
+        Args:
+            sym: Trading symbol.
+
+        Returns:
+            Last known close used for simulated fills.
+        """
+        return quote_by_symbol.get(sym, quote_by_symbol[symbol])
+
+    broker = PaperBroker(quote_fn=_quote_fn, slippage_bps=0.0)
+    orch = Orchestrator(
+        broker=broker,
+        risk_engine=RiskEngine(settings=s),
+        signal_agent=SignalService(settings=s),
+        validation_agent=ValidationService(),
+        rag=_NoOpRag(),
+        memory=_NoOpMemory(),
+        lot_size=lot_size,
+    )
+    orch.execution_agent = _BacktestExecutionAdapter(broker)
+
+    def _no_persist_signal(self: Orchestrator, *args: Any, **kwargs: Any) -> int:
+        """Skip writing Signal rows in backtest simulation mode.
+
+        Returns:
+            Placeholder signal id (0).
+        """
+        return 0
+
+    orch._persist_signal = MethodType(_no_persist_signal, orch)
+
+    class _NoOpTradeDal:
+        """Minimal trade-dal shim for non-persistent simulation mode."""
+
+        @staticmethod
+        def find_by_broker_order_id(broker_order_id: str) -> int | None:
+            """Always return None since no DB inserts are performed."""
+            return None
+
+    orch._trade_dal = _NoOpTradeDal()
+
+    strategy_name = "orchestrator_parity"
+    trades: list[TradeRecord] = []
+    open_trade: dict[str, Any] | None = None
+
+    log.info(
+        "orchestrator_backtest_started",
+        symbol=symbol,
+        bars=len(df),
+        enabled_strategies=s.strategy_list(),
+        min_strategy_agreement=s.min_strategy_agreement,
+        min_signal_confidence=s.min_signal_confidence,
+    )
+
+    for i in range(_WARMUP_BARS, len(df)):
+        bar = df.iloc[i]
+        quote_by_symbol[symbol] = float(bar["close"])
+
+        if open_trade is not None:
+            rec, open_trade = _simulate_trade(
+                i,
+                df,
+                open_trade,
+                trailing_atr_mult,
+                slip_factor=0.0,
+                brokerage_per_rt=0.0,
+                symbol=symbol,
+                strategy_name=str(open_trade.get("strategy", strategy_name)),
+            )
+            if rec is not None:
+                trades.append(rec)
+                orch.risk.record_trade_close(rec.pnl)
+                log.info(
+                    "orchestrator_backtest_trade_closed",
+                    symbol=symbol,
+                    strategy=rec.strategy,
+                    side=rec.side,
+                    exit_reason=rec.exit_reason,
+                    pnl=rec.pnl,
+                    bars_held=rec.bars_held,
+                )
+
+        if open_trade is not None:
+            continue
+
+        window = df.iloc[: i + 1]
+        outcomes = orch.run(symbol, window, is_expiry_day=is_expiry_day)
+        if not outcomes:
+            continue
+
+        outcome = outcomes[0]
+        log.info(
+            "orchestrator_backtest_signal_processed",
+            symbol=symbol,
+            strategy=outcome.signal.get("strategy"),
+            ai_approved=outcome.ai_approved,
+            risk_approved=outcome.risk_approved,
+            risk_reason=outcome.risk_reason,
+            executed=outcome.executed,
+            qty=outcome.qty,
+        )
+
+        if not outcome.executed:
+            continue
+
+        side = str(outcome.signal["side"])
+        fill = float(outcome.fill_price or quote_by_symbol[symbol])
+        open_trade = {
+            "side": side,
+            "entry": round(fill, 2),
+            "stop": float(outcome.signal["stop_loss"]),
+            "target": outcome.signal.get("target"),
+            "qty": int(outcome.qty),
+            "bar": i,
+            "strategy": str(outcome.signal.get("strategy", strategy_name)),
+            "contributors": "",
+        }
+
+    if open_trade is not None:
+        rec = _close_eod(
+            df,
+            open_trade,
+            slip_factor=0.0,
+            brokerage_per_rt=0.0,
+            symbol=symbol,
+            strategy_name=str(open_trade.get("strategy", strategy_name)),
+        )
+        trades.append(rec)
+        orch.risk.record_trade_close(rec.pnl)
+        log.info(
+            "orchestrator_backtest_eod_close",
+            symbol=symbol,
+            strategy=rec.strategy,
+            pnl=rec.pnl,
+        )
+
+    result = _build_result(symbol, strategy_name, trades, capital, df)
+    log.info(
+        "orchestrator_backtest_completed",
+        symbol=symbol,
+        trades=len(trades),
+        total_pnl=result.total_pnl,
+        win_rate=result.win_rate,
+    )
+    return result
 
 
 def walk_forward(
@@ -365,6 +971,7 @@ def walk_forward(
     lot_size: int = 1,
     risk_pct: float = 1.0,
     trailing_atr_mult: float = 0.0,
+    settings: Settings | None = None,
 ) -> list[BacktestResult]:
     """Walk-forward validation: slide a train/test window across the data.
 
@@ -382,6 +989,7 @@ def walk_forward(
         lot_size: F&O lot size.
         risk_pct: Per-trade risk percentage.
         trailing_atr_mult: ATR trailing stop multiplier (0 = disabled).
+        settings: Optional settings object. Defaults to runtime ``get_settings()``.
 
     Returns:
         One BacktestResult per strategy, aggregated across all OOS windows.
@@ -395,14 +1003,18 @@ def walk_forward(
 
     window_start = start
     while window_start + test_bars <= n:
-        test_df = df.iloc[window_start: window_start + test_bars]
         # Prepend warm-up bars from the training window so indicators are valid
         warmup_start = max(0, window_start - _WARMUP_BARS)
-        eval_df = df.iloc[warmup_start: window_start + test_bars]
+        eval_df = df.iloc[warmup_start : window_start + test_bars]
         window_results = run_backtest(
-            eval_df, strategies, symbol=symbol,
-            capital=capital, lot_size=lot_size, risk_pct=risk_pct,
+            eval_df,
+            strategies,
+            symbol=symbol,
+            capital=capital,
+            lot_size=lot_size,
+            risk_pct=risk_pct,
             trailing_atr_mult=trailing_atr_mult,
+            settings=settings,
         )
         for r in window_results:
             all_trades[r.strategy].extend(r.trades)
@@ -426,8 +1038,12 @@ def walk_forward(
                 sharpe=sharpe,
                 sortino=sortino,
                 max_drawdown_pct=max_dd,
-                from_date=df.index[start].date() if isinstance(df.index, pd.DatetimeIndex) else None,
-                to_date=df.index[-1].date() if isinstance(df.index, pd.DatetimeIndex) else None,
+                from_date=df.index[start].date()
+                if isinstance(df.index, pd.DatetimeIndex)
+                else None,
+                to_date=df.index[-1].date()
+                if isinstance(df.index, pd.DatetimeIndex)
+                else None,
             )
         )
     return aggregated
@@ -436,6 +1052,7 @@ def walk_forward(
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def _build_sample_df(n: int = 800) -> pd.DataFrame:
     """Build a synthetic OHLCV DataFrame for smoke-testing the CLI."""
@@ -479,6 +1096,7 @@ def _fetch_real_data(
     from app.services.angel_session import get_angel_session
 
     session = get_angel_session()
+    settings = get_settings()
     from_dt = dt.strptime(from_date, "%Y-%m-%d").replace(hour=9, minute=15)
     to_dt = dt.strptime(to_date, "%Y-%m-%d").replace(hour=15, minute=30)
 
@@ -490,13 +1108,81 @@ def _fetch_real_data(
         from_date=from_date,
         to_date=to_date,
     )
-    raw = session.fetch_candles_for_symbol(
-        symbol=symbol, exchange=exchange, interval=interval,
-        from_dt=from_dt, to_dt=to_dt,
-    )
-    if raw.empty:
-        raise RuntimeError(f"No candle data returned for {symbol} ({from_date} -> {to_date})")
+    chunk_days = max(1, settings.backtest_fetch_chunk_days)
 
+    step_minutes = {
+        "1m": 1,
+        "3m": 3,
+        "5m": 5,
+        "10m": 10,
+        "15m": 15,
+        "30m": 30,
+        "1h": 60,
+        "1d": 1440,
+    }.get(interval, 5)
+
+    chunks: list[pd.DataFrame] = []
+    cursor = from_dt
+    request_pause_sec = max(0.2, settings.fetch_stagger_ms / 1000.0)
+    while cursor < to_dt:
+        chunk_end = min(cursor + timedelta(days=chunk_days), to_dt)
+        part = pd.DataFrame()
+        skip_empty_chunk = False
+        for attempt in range(5):
+            try:
+                part = session.fetch_candles_for_symbol(
+                    symbol=symbol,
+                    exchange=exchange,
+                    interval=interval,
+                    from_dt=cursor,
+                    to_dt=chunk_end,
+                )
+                break
+            except Exception as exc:
+                message = str(exc).lower()
+                is_empty_candle_response = (
+                    "candle fetch failed" in message and "'data': []" in message
+                )
+                if is_empty_candle_response and chunks:
+                    log.warning(
+                        "backtest_fetch_empty_chunk_skipped",
+                        symbol=symbol,
+                        interval=interval,
+                        chunk_from=cursor.strftime("%Y-%m-%d %H:%M"),
+                        chunk_to=chunk_end.strftime("%Y-%m-%d %H:%M"),
+                    )
+                    skip_empty_chunk = True
+                    break
+                is_rate_limited = "rate" in message or "access denied" in message
+                if not is_rate_limited or attempt == 4:
+                    raise
+                backoff = 2.0 * (attempt + 1)
+                log.warning(
+                    "backtest_fetch_rate_limited",
+                    symbol=symbol,
+                    interval=interval,
+                    chunk_from=cursor.strftime("%Y-%m-%d %H:%M"),
+                    chunk_to=chunk_end.strftime("%Y-%m-%d %H:%M"),
+                    attempt=attempt + 1,
+                    retry_after_sec=backoff,
+                )
+                time.sleep(backoff)
+        if skip_empty_chunk:
+            time.sleep(request_pause_sec)
+            cursor = chunk_end + timedelta(minutes=step_minutes)
+            continue
+        if not part.empty:
+            chunks.append(part)
+        time.sleep(request_pause_sec)
+        cursor = chunk_end + timedelta(minutes=step_minutes)
+
+    if not chunks:
+        raise RuntimeError(
+            f"No candle data returned for {symbol} ({from_date} -> {to_date})"
+        )
+
+    raw = pd.concat(chunks, ignore_index=True)
+    raw = raw.drop_duplicates(subset=["datetime"])
     raw = raw.set_index("datetime").sort_index()
     return compute_indicators(raw)
 
@@ -515,21 +1201,32 @@ def _main() -> None:
     parser.add_argument("--lot-size", type=int, default=1)
     parser.add_argument("--walk-forward", action="store_true")
     parser.add_argument(
-        "--from", dest="from_date", default=None,
+        "--from",
+        dest="from_date",
+        default=None,
         help="Start date YYYY-MM-DD (uses Angel API). Omit for synthetic data.",
     )
     parser.add_argument(
-        "--to", dest="to_date", default=None,
+        "--to",
+        dest="to_date",
+        default=None,
         help="End date YYYY-MM-DD (uses Angel API). Omit for synthetic data.",
     )
-    parser.add_argument("--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m, 1d)")
-    parser.add_argument("--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)")
     parser.add_argument(
-        "--trailing-atr", type=float, default=0.0,
+        "--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m, 1d)"
+    )
+    parser.add_argument(
+        "--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)"
+    )
+    parser.add_argument(
+        "--trailing-atr",
+        type=float,
+        default=0.0,
         help="ATR trailing stop multiplier (e.g. 1.5). 0 = disabled.",
     )
     parser.add_argument(
-        "--params", default=None,
+        "--params",
+        default=None,
         help='JSON dict of strategy params, e.g. \'{"atr_mult": 1.2, "period": 7}\'',
     )
     args = parser.parse_args()
@@ -537,7 +1234,11 @@ def _main() -> None:
     # Load data: real from Angel API or synthetic
     if args.from_date and args.to_date:
         df = _fetch_real_data(
-            args.symbol, args.exchange, args.interval, args.from_date, args.to_date,
+            args.symbol,
+            args.exchange,
+            args.interval,
+            args.from_date,
+            args.to_date,
         )
     else:
         df = _build_sample_df()
@@ -546,15 +1247,22 @@ def _main() -> None:
     custom_params: dict = {}
     if args.params:
         import json as _json
+
         custom_params = _json.loads(args.params)
 
     strategies: list[Strategy] = (
         [cls(**custom_params) for cls in ALL_STRATEGIES]
         if args.strategy == "all"
-        else [cls(**custom_params) for cls in ALL_STRATEGIES if cls.name == args.strategy]
+        else [
+            cls(**custom_params) for cls in ALL_STRATEGIES if cls.name == args.strategy
+        ]
     )
     if not strategies:
-        print(f"No strategy named '{args.strategy}'. Available: {[c.name for c in ALL_STRATEGIES]}")
+        log.error(
+            "backtest_strategy_not_found",
+            requested=args.strategy,
+            available=[c.name for c in ALL_STRATEGIES],
+        )
         return
 
     log.info(
@@ -567,19 +1275,27 @@ def _main() -> None:
 
     if args.walk_forward:
         results = walk_forward(
-            df, strategies, symbol=args.symbol,
-            capital=args.capital, lot_size=args.lot_size, risk_pct=args.risk_pct,
+            df,
+            strategies,
+            symbol=args.symbol,
+            capital=args.capital,
+            lot_size=args.lot_size,
+            risk_pct=args.risk_pct,
             trailing_atr_mult=args.trailing_atr,
         )
     else:
         results = run_backtest(
-            df, strategies, symbol=args.symbol,
-            capital=args.capital, lot_size=args.lot_size, risk_pct=args.risk_pct,
+            df,
+            strategies,
+            symbol=args.symbol,
+            capital=args.capital,
+            lot_size=args.lot_size,
+            risk_pct=args.risk_pct,
             trailing_atr_mult=args.trailing_atr,
         )
 
     for r in results:
-        print(r.summary())
+        log.info("backtest_summary", summary=r.summary())
 
 
 if __name__ == "__main__":

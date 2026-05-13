@@ -1,4 +1,5 @@
 """TradeMemory: SQL-backed replacement for RAG context."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -44,12 +45,35 @@ def _seed(factory, rows: list[dict]) -> None:
 
 def test_stats_aggregates_wins_losses_and_avg_pnl():
     factory = _make_factory()
-    _seed(factory, [
-        {"symbol": "NIFTY", "strategy": "rsi_reversal", "side": "BUY", "pnl": 300.0},
-        {"symbol": "NIFTY", "strategy": "rsi_reversal", "side": "BUY", "pnl": -100.0},
-        {"symbol": "NIFTY", "strategy": "rsi_reversal", "side": "BUY", "pnl": 200.0},
-        {"symbol": "NIFTY", "strategy": "ema_breakout", "side": "BUY", "pnl": 500.0},  # filtered out
-    ])
+    _seed(
+        factory,
+        [
+            {
+                "symbol": "NIFTY",
+                "strategy": "rsi_reversal",
+                "side": "BUY",
+                "pnl": 300.0,
+            },
+            {
+                "symbol": "NIFTY",
+                "strategy": "rsi_reversal",
+                "side": "BUY",
+                "pnl": -100.0,
+            },
+            {
+                "symbol": "NIFTY",
+                "strategy": "rsi_reversal",
+                "side": "BUY",
+                "pnl": 200.0,
+            },
+            {
+                "symbol": "NIFTY",
+                "strategy": "ema_breakout",
+                "side": "BUY",
+                "pnl": 500.0,
+            },  # filtered out
+        ],
+    )
     mem = TradeMemory(session_factory=factory)
     stats = mem.stats("NIFTY", "rsi_reversal", "BUY")
     assert stats.total == 3
@@ -61,29 +85,59 @@ def test_stats_aggregates_wins_losses_and_avg_pnl():
 
 def test_format_context_returns_history_line_and_rows():
     factory = _make_factory()
-    _seed(factory, [
-        {"symbol": "BANKNIFTY", "strategy": "ema_breakout", "side": "BUY", "pnl": 400.0},
-        {"symbol": "BANKNIFTY", "strategy": "ema_breakout", "side": "BUY", "pnl": -200.0},
-    ])
+    _seed(
+        factory,
+        [
+            {
+                "symbol": "BANKNIFTY",
+                "strategy": "ema_breakout",
+                "side": "BUY",
+                "pnl": 400.0,
+            },
+            {
+                "symbol": "BANKNIFTY",
+                "strategy": "ema_breakout",
+                "side": "BUY",
+                "pnl": -200.0,
+            },
+        ],
+    )
     mem = TradeMemory(session_factory=factory)
     lines = mem.format_context("BANKNIFTY", "ema_breakout", "BUY", k=5)
     assert lines, "expected at least one context line"
-    assert any("History[" in l for l in lines)
-    assert any("Past:" in l for l in lines)
+    assert any("History[" in line for line in lines)
+    assert any("Past:" in line for line in lines)
 
 
 def test_recent_similar_excludes_open_trades_and_other_symbols():
     factory = _make_factory()
-    _seed(factory, [
-        {"symbol": "NIFTY", "strategy": "rsi_reversal", "side": "BUY", "pnl": 100.0},
-    ])
+    _seed(
+        factory,
+        [
+            {
+                "symbol": "NIFTY",
+                "strategy": "rsi_reversal",
+                "side": "BUY",
+                "pnl": 100.0,
+            },
+        ],
+    )
     # Also add an OPEN trade — must be excluded.
     with factory() as s:
-        s.add(Trade(
-            opened_at=datetime.utcnow(), status="OPEN", mode="paper",
-            symbol="NIFTY", strategy="rsi_reversal", side="BUY",
-            qty=50, entry_price=100, stop_loss=95, pnl=0.0,
-        ))
+        s.add(
+            Trade(
+                opened_at=datetime.utcnow(),
+                status="OPEN",
+                mode="paper",
+                symbol="NIFTY",
+                strategy="rsi_reversal",
+                side="BUY",
+                qty=50,
+                entry_price=100,
+                stop_loss=95,
+                pnl=0.0,
+            )
+        )
         s.commit()
     mem = TradeMemory(session_factory=factory)
     rows = mem.recent_similar("NIFTY", "rsi_reversal", "BUY", k=10)

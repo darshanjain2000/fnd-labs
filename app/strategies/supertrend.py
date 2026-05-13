@@ -3,6 +3,7 @@
 Fires on a direction flip of the Supertrend indicator — a trend-following
 signal that uses ATR-based bands to define dynamic support/resistance.
 """
+
 from __future__ import annotations
 
 import pandas as pd

@@ -4,6 +4,7 @@ A squeeze occurs when the band width narrows below a threshold, indicating
 low volatility. When price breaks out of the band after a squeeze, momentum
 tends to be strong and directional.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -19,11 +20,11 @@ class BollingerSqueeze(Strategy):
     - Previous candle close was inside the band; current close breaks out.
 
     Stop-loss is placed at the Bollinger mid (20-period SMA).
-    Preferred regimes: range (squeeze resolves), trend_up, trend_down.
+    Preferred regimes: range only - squeeze setups are a ranging-market pattern.
     """
 
     name = "bollinger_squeeze"
-    preferred_regimes = ("range", "trend_up", "trend_down")
+    preferred_regimes = ("range",)
 
     def __init__(self, squeeze_pct: float = 2.0, atr_mult: float = 1.5) -> None:
         """Initialise strategy parameters.
@@ -61,8 +62,18 @@ class BollingerSqueeze(Strategy):
         prev_bb_lower = float(prev.get("bb_lower", float("nan")))
         prev_close = float(prev["close"])
 
-        if any(pd.isna(v) for v in (bb_upper, bb_lower, bb_mid, bb_width, atr,
-                                     prev_bb_upper, prev_bb_lower)):
+        if any(
+            pd.isna(v)
+            for v in (
+                bb_upper,
+                bb_lower,
+                bb_mid,
+                bb_width,
+                atr,
+                prev_bb_upper,
+                prev_bb_lower,
+            )
+        ):
             return None
 
         # Must be in a squeeze (band width as ratio, convert to %)
@@ -79,7 +90,10 @@ class BollingerSqueeze(Strategy):
                 stop_loss=round(bb_mid, 2),
                 target=round(close + self.atr_mult * atr, 2),
                 confidence=0.62,
-                context={"bb_width_pct": round(bb_width * 100, 3), "bb_upper": bb_upper},
+                context={
+                    "bb_width_pct": round(bb_width * 100, 3),
+                    "bb_upper": bb_upper,
+                },
             )
         # Downside breakdown
         if prev_close >= prev_bb_lower and close < bb_lower:
@@ -91,6 +105,9 @@ class BollingerSqueeze(Strategy):
                 stop_loss=round(bb_mid, 2),
                 target=round(close - self.atr_mult * atr, 2),
                 confidence=0.62,
-                context={"bb_width_pct": round(bb_width * 100, 3), "bb_lower": bb_lower},
+                context={
+                    "bb_width_pct": round(bb_width * 100, 3),
+                    "bb_lower": bb_lower,
+                },
             )
         return None

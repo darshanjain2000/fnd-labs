@@ -1,4 +1,5 @@
 """Thin wrapper over kiteconnect. Kept minimal; expanded in Phase 1."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -21,7 +22,9 @@ class KiteBroker(Broker):
 
         s = get_settings()
         if not (s.kite_api_key and s.kite_access_token):
-            raise RuntimeError("KITE_API_KEY and KITE_ACCESS_TOKEN must be set for live mode")
+            raise RuntimeError(
+                "KITE_API_KEY and KITE_ACCESS_TOKEN must be set for live mode"
+            )
 
         self._kite = KiteConnect(api_key=s.kite_api_key)
         self._kite.set_access_token(s.kite_access_token)
@@ -46,7 +49,9 @@ class KiteBroker(Broker):
 
         order_id = k.place_order(**params)
         log.info("kite_order_placed", order_id=order_id, **params)
-        return OrderResult(order_id=str(order_id), status="OPEN", avg_price=0.0, filled_qty=0)
+        return OrderResult(
+            order_id=str(order_id), status="OPEN", avg_price=0.0, filled_qty=0
+        )
 
     def cancel_order(self, order_id: str) -> bool:
         try:

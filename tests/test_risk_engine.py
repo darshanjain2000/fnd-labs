@@ -1,10 +1,8 @@
-from app.config import Settings
-from app.engine.risk_engine import RiskEngine, position_size
-from app.strategies.base import Signal
+"""Unit tests for RiskEngine gates + position_size helper."""
 
+from __future__ import annotations
 
-def _sig(entry=100.0, stop=98.0) -> Signal:
-    return Signal(symbol="X", strategy="t", side="BUY", entry=entry, stop_loss=stop, target=104.0)
+from app.engine.risk_engine import position_size
 
 
 def test_position_size_basic():
@@ -21,44 +19,48 @@ def test_position_size_zero_on_bad_stop():
     assert position_size(100_000, 1.0, 100.0, 100.0) == 0
 
 
-def _engine(**overrides) -> RiskEngine:
-    base = dict(
-        mode="paper", capital_inr=100_000.0, max_risk_per_trade_pct=1.0,
-        max_daily_loss_pct=2.0, max_open_positions=3, max_trades_per_day=5,
-        kill_switch=False, block_expiry_last_hours=2,
-    )
-    base.update(overrides)
-    return RiskEngine(settings=Settings(**base))
-
-
-def test_kill_switch_blocks():
-    e = _engine(kill_switch=True)
-    d = e.evaluate(_sig())
+def test_kill_switch_blocks(make_risk_engine, make_signal):
+    e = make_risk_engine(kill_switch=True)
+    d = e.evaluate(make_signal())
     assert not d.approved and d.reason == "kill_switch_on"
 
 
-def test_max_trades_per_day_blocks():
-    e = _engine()
+def test_max_trades_per_day_blocks(make_risk_engine, make_signal):
+    e = make_risk_engine()
     e.stats.trades_today = 5
-    d = e.evaluate(_sig())
+    d = e.evaluate(make_signal())
     assert not d.approved and d.reason == "max_trades_per_day"
 
 
-def test_max_open_positions_blocks():
-    e = _engine()
+def test_max_open_positions_blocks(make_risk_engine, make_signal):
+    e = make_risk_engine()
     e.stats.open_positions = 3
-    d = e.evaluate(_sig())
+    d = e.evaluate(make_signal())
     assert not d.approved and d.reason == "max_open_positions"
 
 
-def test_daily_loss_limit_blocks():
-    e = _engine()
+def test_daily_loss_limit_blocks(make_risk_engine, make_signal):
+    e = make_risk_engine()
     e.stats.realized_pnl_today = -2001
-    d = e.evaluate(_sig())
+    d = e.evaluate(make_signal())
     assert not d.approved and d.reason == "daily_loss_limit"
 
 
-def test_happy_path_approves_with_qty():
-    e = _engine()
-    d = e.evaluate(_sig(), lot_size=1)
+def test_happy_path_approves_with_qty(make_risk_engine, make_signal):
+    e = make_risk_engine()
+    d = e.evaluate(make_signal(), lot_size=1)
     assert d.approved and d.qty == 500 and d.reason == "ok"
+
+
+def test_rr_gate_blocks_when_ratio_below_minimum(make_risk_engine, make_signal) -> None:
+    # entry=100, stop=98 (risk=2), target=101 (reward=1) => R:R = 0.5 < 2.0
+    e = make_risk_engine(rr_gate_enabled=True, min_rr_ratio=2.0)
+    d = e.evaluate(make_signal(entry=100.0, stop_loss=98.0, target=101.0), lot_size=1)
+    assert not d.approved and d.reason == "rr_below_minimum"
+
+
+def test_rr_gate_passes_when_ratio_meets_minimum(make_risk_engine, make_signal) -> None:
+    # entry=100, stop=98 (risk=2), target=105 (reward=5) => R:R = 2.5 >= 2.0
+    e = make_risk_engine(rr_gate_enabled=True, min_rr_ratio=2.0)
+    d = e.evaluate(make_signal(entry=100.0, stop_loss=98.0, target=105.0), lot_size=1)
+    assert d.approved and d.reason == "ok"

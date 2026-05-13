@@ -1,18 +1,21 @@
+"""Manual order placement endpoint."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.agents.execution_agent import ExecutionAgent
-from app.api.deps import get_broker, set_mock_quote
-from app.db import SessionLocal
-from app.services.broker.base import Broker, OrderRequest
+from app.controllers.execution_controller import ExecutionController
+from app.models.api import ApiResponse, OrderResultOut
+from app.routers.deps import get_execution_controller, set_mock_quote
 from app.strategies.base import Signal
 
 router = APIRouter(prefix="/trade", tags=["trade"])
 
 
 class ManualTrade(BaseModel):
+    """Request body for ``POST /trade/manual``."""
+
     symbol: str
     side: str  # BUY / SELL
     qty: int
@@ -24,8 +27,18 @@ class ManualTrade(BaseModel):
     mock_quote: float | None = None
 
 
-@router.post("/manual")
-def place_manual(req: ManualTrade, broker: Broker = Depends(get_broker)) -> dict:
+@router.post("/manual", response_model=ApiResponse[OrderResultOut])
+def place_manual(
+    req: ManualTrade,
+    execution: ExecutionController = Depends(get_execution_controller),
+) -> ApiResponse[OrderResultOut]:
+    """Place a manual order through the active broker.
+
+    Builds a synthetic ``Signal`` (``strategy="manual"``) so the execution
+    service can persist a Trade row alongside the broker call. Falls back
+    to ``±2%`` / ``±4%`` bounds when ``stop_loss`` / ``target`` are not
+    supplied.
+    """
     if req.mock_quote is not None:
         set_mock_quote(req.symbol, req.mock_quote)
 
@@ -33,7 +46,6 @@ def place_manual(req: ManualTrade, broker: Broker = Depends(get_broker)) -> dict
     stop_loss = req.stop_loss or round(entry_price * 0.98, 2)
     target = req.target or round(entry_price * 1.04, 2)
 
-    # Build a Signal stub so ExecutionAgent can persist the Trade row.
     sig = Signal(
         symbol=req.symbol,
         strategy="manual",
@@ -44,6 +56,5 @@ def place_manual(req: ManualTrade, broker: Broker = Depends(get_broker)) -> dict
         confidence=1.0,
     )
 
-    agent = ExecutionAgent(broker, session_factory=SessionLocal)
-    result = agent.execute(sig, qty=req.qty, signal_row_id=None)
-    return result.__dict__
+    result = execution.execute(sig, qty=req.qty, signal_row_id=None)
+    return ApiResponse[OrderResultOut].ok(OrderResultOut.from_result(result))

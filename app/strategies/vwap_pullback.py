@@ -29,7 +29,10 @@ class VWAPPullback(Strategy):
 
         if close > ema20:  # uptrend pullback
             return Signal(
-                symbol=symbol, strategy=self.name, side="BUY", entry=close,
+                symbol=symbol,
+                strategy=self.name,
+                side="BUY",
+                entry=close,
                 stop_loss=round(close - self.atr_mult * atr, 2),
                 target=round(close + 2 * self.atr_mult * atr, 2),
                 confidence=0.55,
@@ -37,7 +40,10 @@ class VWAPPullback(Strategy):
             )
         if close < ema20:
             return Signal(
-                symbol=symbol, strategy=self.name, side="SELL", entry=close,
+                symbol=symbol,
+                strategy=self.name,
+                side="SELL",
+                entry=close,
                 stop_loss=round(close + self.atr_mult * atr, 2),
                 target=round(close - 2 * self.atr_mult * atr, 2),
                 confidence=0.55,

@@ -7,6 +7,7 @@ above the range high or below the range low signals a directional trade.
 Requires a ``pd.DatetimeIndex`` on the candles DataFrame (timezone-aware or
 naive IST). If the index is not a DatetimeIndex, the strategy returns None.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -93,7 +94,11 @@ class ORBBreakout(Strategy):
                 stop_loss=round(orb_low, 2),
                 target=round(close + or_width, 2),
                 confidence=0.65,
-                context={"orb_high": orb_high, "orb_low": orb_low, "or_width": or_width},
+                context={
+                    "orb_high": orb_high,
+                    "orb_low": orb_low,
+                    "or_width": or_width,
+                },
             )
         # Downside breakdown
         if prev_close >= orb_low and close < orb_low:
@@ -105,6 +110,10 @@ class ORBBreakout(Strategy):
                 stop_loss=round(orb_high, 2),
                 target=round(close - or_width, 2),
                 confidence=0.65,
-                context={"orb_high": orb_high, "orb_low": orb_low, "or_width": or_width},
+                context={
+                    "orb_high": orb_high,
+                    "orb_low": orb_low,
+                    "or_width": or_width,
+                },
             )
         return None

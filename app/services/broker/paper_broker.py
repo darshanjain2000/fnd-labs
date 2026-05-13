@@ -1,4 +1,5 @@
 """Paper broker: simulates fills at live quote + slippage. Same interface as Kite."""
+
 from __future__ import annotations
 
 import random
@@ -14,7 +15,9 @@ log = get_logger(__name__)
 class PaperBroker(Broker):
     mode = "paper"
 
-    def __init__(self, quote_fn: Callable[[str], float], slippage_bps: float = 5.0) -> None:
+    def __init__(
+        self, quote_fn: Callable[[str], float], slippage_bps: float = 5.0
+    ) -> None:
         self._quote_fn = quote_fn
         self._slippage_bps = slippage_bps
         self._orders: dict[str, OrderResult] = {}
@@ -25,7 +28,11 @@ class PaperBroker(Broker):
         return price + jitter if side == "BUY" else price - jitter
 
     def place_order(self, req: OrderRequest) -> OrderResult:
-        px = req.price if req.order_type == "LIMIT" and req.price else self._quote_fn(req.symbol)
+        px = (
+            req.price
+            if req.order_type == "LIMIT" and req.price
+            else self._quote_fn(req.symbol)
+        )
         fill = round(self._slip(px, req.side), 2)
         order_id = f"PAPER-{uuid.uuid4().hex[:10]}"
         result = OrderResult(
@@ -36,7 +43,14 @@ class PaperBroker(Broker):
             message="paper fill",
         )
         self._orders[order_id] = result
-        log.info("paper_order_filled", symbol=req.symbol, side=req.side, qty=req.qty, price=fill, tag=req.tag)
+        log.info(
+            "paper_order_filled",
+            symbol=req.symbol,
+            side=req.side,
+            qty=req.qty,
+            price=fill,
+            tag=req.tag,
+        )
         return result
 
     def cancel_order(self, order_id: str) -> bool:

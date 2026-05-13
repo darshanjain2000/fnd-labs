@@ -3,6 +3,7 @@
 Fires when the MACD line crosses above or below its signal line while still
 on the opposite side of zero — a classic trend-confirmation entry.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -70,7 +71,11 @@ class MACDDivergence(Strategy):
                 stop_loss=round(close - stop_dist, 2),
                 target=round(close + target_dist, 2),
                 confidence=0.60,
-                context={"macd": macd, "macd_signal": sig_line, "hist": macd - sig_line},
+                context={
+                    "macd": macd,
+                    "macd_signal": sig_line,
+                    "hist": macd - sig_line,
+                },
             )
         # Bearish crossover: MACD crosses below signal above zero
         if macd_prev > sig_prev and macd < sig_line and macd > 0:
@@ -82,6 +87,10 @@ class MACDDivergence(Strategy):
                 stop_loss=round(close + stop_dist, 2),
                 target=round(close - target_dist, 2),
                 confidence=0.60,
-                context={"macd": macd, "macd_signal": sig_line, "hist": macd - sig_line},
+                context={
+                    "macd": macd,
+                    "macd_signal": sig_line,
+                    "hist": macd - sig_line,
+                },
             )
         return None

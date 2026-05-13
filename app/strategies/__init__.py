@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.strategies.base import Signal, Strategy
 from app.strategies.bollinger_squeeze import BollingerSqueeze
 from app.strategies.ema_breakout import EMABreakout

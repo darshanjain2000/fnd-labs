@@ -1,51 +1,22 @@
 """End-to-end: orchestrator runs pipeline, Trade/Signal/AuditLog rows land in DB."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
 
-import numpy as np
-import pandas as pd
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.config import Settings
 from app.engine.orchestrator import Orchestrator
-from app.models import Base
 from app.models.trade import AuditLog, Signal, Trade
-from app.services.broker.paper_broker import PaperBroker
-from app.services.market_data import compute_indicators
 
 
-def _make_db_factory():
-    engine = create_engine("sqlite:///:memory:", future=True, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-
-
-def _oversold_candles() -> pd.DataFrame:
-    closes = list(np.linspace(200, 100, 60))  # monotonic decline -> RSI deep oversold
-    df = pd.DataFrame({
-        "open": closes,
-        "high": [c * 1.005 for c in closes],
-        "low": [c * 0.995 for c in closes],
-        "close": closes,
-        "volume": [1000] * len(closes),
-    })
-    return compute_indicators(df)
-
-
-def _permissive_settings() -> Settings:
-    """Return settings with min_strategy_agreement=1 so single-strategy tests pass."""
-    return Settings(mode="paper", min_strategy_agreement=1, min_signal_confidence=0.0)
-
-
-def test_orchestrator_executes_and_persists_paper_trade():
-    factory = _make_db_factory()
-    broker = PaperBroker(quote_fn=lambda s: 100.0)
+def test_orchestrator_executes_and_persists_paper_trade(
+    db_factory, make_paper_broker, make_settings, make_candles
+):
+    factory = db_factory()
+    broker = make_paper_broker()
     orch = Orchestrator(broker=broker, session_factory=factory)
 
-    with patch("app.engine.orchestrator.get_settings", return_value=_permissive_settings()):
-        outcomes = orch.run("TEST", _oversold_candles())
+    with patch("app.engine.orchestrator.get_settings", return_value=make_settings()):
+        outcomes = orch.run("TEST", make_candles())
 
     assert len(outcomes) >= 1
     executed = [o for o in outcomes if o.executed]
@@ -72,14 +43,16 @@ def test_orchestrator_executes_and_persists_paper_trade():
         assert len(audits) >= 1
 
 
-def test_close_trade_computes_pnl():
+def test_close_trade_computes_pnl(
+    db_factory, make_paper_broker, make_settings, make_candles
+):
     from app.agents.execution_agent import ExecutionAgent
 
-    factory = _make_db_factory()
-    broker = PaperBroker(quote_fn=lambda s: 100.0)
+    factory = db_factory()
+    broker = make_paper_broker()
     orch = Orchestrator(broker=broker, session_factory=factory)
-    with patch("app.engine.orchestrator.get_settings", return_value=_permissive_settings()):
-        outcomes = orch.run("TEST", _oversold_candles())
+    with patch("app.engine.orchestrator.get_settings", return_value=make_settings()):
+        outcomes = orch.run("TEST", make_candles())
     executed = next(o for o in outcomes if o.executed)
 
     agent = ExecutionAgent(broker, session_factory=factory)

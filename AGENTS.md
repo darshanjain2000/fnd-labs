@@ -1,13 +1,13 @@
 # trading-poc — Agent & Contributor Guidelines
 
-> Read `docs/ARCHITECTURE.md` for a full component map and `docs/plan.md` for the roadmap.
+> Read `docs/ARCHITECTURE.md` for a full component map, `docs/plan.md` for roadmap status, and `docs/WORKFLOW.md` for full operator workflow and commands.
 > This file exists to orient AI agents and new contributors so they can work faster and safer.
 
 ---
 
 ## 1. What This Project Is
 
-An automated F&O trading bot that runs a 60-second loop during NSE market hours (IST Mon-Fri 09:15-15:30).
+An automated Equity trading bot that runs a 60-second loop during NSE market hours (IST Mon-Fri 09:15-15:30).
 Each tick: fetch OHLCV candles → run strategies → LLM validation → risk gate → broker execution → persist.
 All state lives in SQLite; all control is via a FastAPI HTTP API.
 
@@ -20,7 +20,7 @@ All state lives in SQLite; all control is via a FastAPI HTTP API.
 ```
 Scheduler (heartbeat every 60s)
   └─ per-symbol pipeline:
-       SignalAgent (3 strategies)
+             SignalAgent (enabled strategy set)
          → ValidationAgent (LLM via OpenRouter, optional)
            → RiskEngine (7 hard gates)
              → ExecutionAgent (broker + SQLite)
@@ -39,19 +39,16 @@ Hot-path files (read these before touching the pipeline):
 ```powershell
 # Install
 pip install -r requirements.txt
-
 # Run all tests (must stay green)
 python -m pytest -q
-
 # Start server (paper mode by default)
 uvicorn app.main:app --reload
-
 # Or run directly
 python app/main.py
 ```
 
 When adding a feature, add tests in `tests/`. Run `pytest -q` before finishing.
-Target: **all tests pass**. The baseline is 47 tests.
+Target: **all tests pass**.
 
 ---
 
@@ -75,9 +72,398 @@ Before posting any code, verify:
 - [ ] No logic duplicated from an existing helper.
 - [ ] `pytest -q` still passes (run it).
 
+### After Coding (Mandatory)
+
+Update required .md file be it AGENTS.md, doc/ARCHITECTURE.md or doc/plan.md with relevent changes along with .env.local as well.
+
 ---
 
 ## 5. Code Style
+
+# Coding Style Guide
+
+General coding patterns and conventions to follow when writing code in this developer's style. Technology-agnostic unless noted.
+
+## Architecture
+
+Strict layered architecture. Never skip layers or mix concerns across them.
+
+```
+Models → Data Access → Services → Controllers → API Layer
+```
+
+| Layer | Responsibility |
+|---|---|
+| **Models** | Data shapes, validation, enums |
+| **Data Access** | DB/external queries only, no logic |
+| **Services** | All business logic, no HTTP/transport concerns |
+| **Controllers** | Thin delegation — calls services, returns results |
+| **API Layer** | HTTP binding, auth, error-to-response mapping |
+
+---
+
+## File & Directory Structure
+
+- One file per logical unit — `{entity}_{layer}.py`
+- Group by layer, not by feature
+
+```
+src/
+  models/
+  dal/
+  services/
+  controllers/
+  routers/
+  tasks/
+  utils/
+  enums/
+```
+
+---
+
+## Naming Conventions
+
+| Thing | Style | Example |
+|---|---|---|
+| Classes | PascalCase | `UserService`, `OrderRepository` |
+| Functions / methods | snake_case, verb-first | `get_user`, `build_filter_query`, `process_batch_recursively` |
+| Variables | snake_case, descriptive | `subscription_guid`, `batch_results` |
+| Booleans | `is_` / `has_` prefix | `is_deleted`, `has_access` |
+| Collections | plural | `user_ids`, `batch_results` |
+| Files | snake_case | `order_service.py`, `response_filter_helper.py` |
+| Constants / status enums | IntEnum PascalCase members | `ProcessingStatus.IN_PROGRESS` |
+
+No abbreviations unless universally understood. `guid` is fine. `sub` for subscription is not.
+
+---
+
+## Imports
+
+Order: **stdlib → third-party → local**. Blank line only before local imports.
+
+```python
+from typing import Dict, Any, Optional, List, Tuple
+from datetime import datetime
+from enum import IntEnum
+
+from pydantic import BaseModel, Field
+from fastapi import APIRouter
+
+from app_settings import AppSettings
+from models.user import User
+from utils.logger import logger
+```
+
+- Prefer `from module import Name` over `import module` then `module.Name`
+- No aliasing on local imports
+- Lazy imports inside methods only for circular imports or optional heavy dependencies
+
+---
+
+## Data Models
+
+All data structures use **Pydantic `BaseModel`**. No plain dicts or dataclasses for domain objects.
+
+```python
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Dict, Any
+
+class CreateOrderRequest(BaseModel):
+    user_id: str
+    items: List[str]
+    metadata: Optional[Dict[str, Any]] = None
+    priority: int = Field(default=1, ge=1, le=5)
+```
+
+- `Field()` for defaults, constraints, and documentation
+- `@field_validator()` for custom validation logic
+- `.model_dump()` for serialization
+- `.get()` with defaults when accessing raw dicts from external sources
+
+**Enums use `IntEnum`:**
+
+```python
+from enum import IntEnum
+
+class ProcessingStatus(IntEnum):
+    NEW = 0
+    IN_PROGRESS = 1
+    COMPLETED = 2
+    FAILED = 3
+```
+
+---
+
+## API Response Pattern
+
+Every endpoint returns a **typed generic response wrapper**. Never return raw dicts or bare models.
+
+```python
+class ApiResponse(BaseModel, Generic[T]):
+    statusCode: int
+    message: Optional[str] = None
+    result: Optional[T] = None
+    error: Optional[str] = None
+```
+
+Usage:
+
+```python
+# Success
+return ApiResponse[User](statusCode=HTTPStatus.OK, message="Fetched", result=user)
+
+# Error
+return ApiResponse[User](statusCode=CustomExceptionCodes.DataNotFound, error=str(e))
+```
+
+---
+
+## API Endpoints
+
+```python
+from fastapi import APIRouter, Query, Body, Depends
+from http import HTTPStatus
+
+router = APIRouter(prefix="/orders", tags=["Orders"])
+
+@router.get("/", response_model=ApiResponse[List[Order]], dependencies=[Depends(auth)])
+async def get_orders(
+    user_id: str = Query(..., description="The user ID"),
+) -> ApiResponse[List[Order]]:
+    try:
+        result = controller.get_orders(user_id)
+        return ApiResponse[List[Order]](statusCode=HTTPStatus.OK, result=result)
+    except DataNotFoundException as e:
+        return ApiResponse[List[Order]](statusCode=CustomExceptionCodes.DataNotFound, error=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return ApiResponse[List[Order]](statusCode=HTTPStatus.INTERNAL_SERVER_ERROR, error=str(e))
+```
+
+- Route handlers are **`async def`**; services and controllers are **sync**
+- Always use `Query(...)` / `Body(...)` with descriptions for explicit parameter documentation
+- HTTP status codes from `http.HTTPStatus`
+- Catch specific exceptions first, generic `Exception` last
+- Auth applied via `dependencies=[Depends(auth)]`
+
+---
+
+## Controllers
+
+Thin. Zero business logic. Calls services and returns results.
+
+```python
+class OrderController:
+    def __init__(self):
+        self.service = OrderService()
+
+    def get_orders(self, user_id: str) -> List[Order]:
+        return self.service.get_orders_for_user(user_id)
+```
+
+Always sync — no `async def`.
+
+---
+
+## Services
+
+All business logic lives here. Always sync. No HTTP or transport concerns.
+
+```python
+class OrderService:
+    def __init__(self):
+        self.order_dal = OrderDAL()
+
+    def get_orders_for_user(self, user_id: str) -> List[Order]:
+        logger.set_context(user_id=user_id)
+        logger.info("Fetching orders")
+        orders = self.order_dal.find_by_user(user_id)
+        if not orders:
+            raise DataNotFoundException(f"No orders found for user {user_id}")
+        return orders
+```
+
+- Set logger context with relevant IDs at the start of every public method
+- Raise custom exceptions on failure — **never return `None`** to signal failure
+- Do not catch exceptions unless you can meaningfully recover; let them propagate
+
+---
+
+## Data Access Layer
+
+Queries only. No business logic. Always deserialize raw results into Pydantic models before returning.
+
+```python
+class OrderDAL(BaseRepository):
+    def __init__(self):
+        super().__init__()
+        self.collection = get_db_connection()["orders"]
+
+    def find_by_user(self, user_id: str) -> Optional[List[Order]]:
+        docs = self.filter({"userId": user_id})
+        if not docs:
+            return None
+        return [Order(**doc) for doc in docs]
+```
+
+- Use `.get(key, default)` for raw dict access
+- Never let raw DB documents leak out of this layer
+
+---
+
+## Error Handling
+
+Define custom exceptions with integer error codes via `IntEnum`:
+
+```python
+from enum import IntEnum
+
+class CustomExceptionCodes(IntEnum):
+    DataNotFound = 601
+    InvalidRequest = 602
+    ProcessingFailed = 603
+
+class DataNotFoundException(Exception):
+    def __init__(self, message="Data not found", error_code=CustomExceptionCodes.DataNotFound.value):
+        super().__init__(message)
+        self.error_code = error_code
+```
+
+Rules:
+- **Services**: raise, don't catch (unless recovery is possible)
+- **Routers**: catch specific → catch generic, map all to `ApiResponse`
+- **Background tasks**: catch everything, return status dict — never raise
+- Never `except: pass` or bare `except`
+- Always log before re-raising or returning error responses
+
+---
+
+## Logging
+
+Use the project's context-aware logger. Never use `print()` or raw `logging` directly.
+
+```python
+from utils.logger import logger
+
+# Set request-scoped context once at method entry
+logger.set_context(user_id=user_id, order_id=order_id)
+
+logger.info("Processing order")
+logger.warning("Retrying after transient failure")
+logger.error(f"Failed to reach payment service: {str(e)}")
+logger.exception(f"Unexpected error: {str(e)}")  # includes stack trace
+```
+
+- Context format: `[key=value][key2=value2] message`
+- Always include `str(e)` in error/exception messages
+- Use f-strings for all log messages
+
+---
+
+## Configuration
+
+Use a **singleton settings class** loaded from environment-specific config files. Never hardcode values.
+
+```python
+# Pattern
+class AppSettings:
+    _instance = None
+    _initialized = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not AppSettings._initialized:
+            self._load()
+            AppSettings._initialized = True
+```
+
+- Config files per environment: `dev.json`, `uat.json`, `prod.json`
+- Group settings by domain: `settings.database`, `settings.cache`, `settings.external_api`
+- Use `@property` for lazy initialization of clients/connections
+- **Never hardcode**: URLs, API keys, DB names, timeouts, magic strings
+
+---
+
+## Batch Processing
+
+For large datasets: paginate, process in batches, consolidate results.
+
+```python
+batch_size = 500
+total_pages = (total_count + batch_size - 1) // batch_size  # ceiling division
+
+results = []
+for page in range(1, total_pages + 1):
+    batch = dal.get_page(query, page=page, page_size=batch_size)
+    results.append(process_batch(batch))
+
+final = consolidate(results)
+```
+
+---
+
+## Parsing Structured Data from Unstructured Text
+
+When extracting structured data (JSON) from free-form text (e.g., LLM output), always use regex extraction before parsing, and handle failures with fallbacks:
+
+```python
+import re, json
+
+match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+if match:
+    data = json.loads(match.group())
+else:
+    data = default_value
+```
+
+---
+
+## Type Annotations
+
+Every public method has full annotations including return type:
+
+```python
+def get_orders(
+    self,
+    user_id: str,
+    status: Optional[ProcessingStatus] = None,
+) -> List[Order]:
+```
+
+Use `typing` module: `Dict[str, Any]`, `List[str]`, `Optional[str]`, `Tuple[A, B]`.
+
+---
+
+## Code Style
+
+- 4-space indentation
+- F-strings for all string interpolation — no `%` formatting or `.format()`
+- `is None` / `is not None` — never `== None`
+- `if value:` for truthiness checks
+- `.get(key, default)` for dict access
+- Blank lines between class methods
+- Inline comments only when the *why* is non-obvious — never explain *what*
+
+---
+
+## What to Avoid
+
+- `except: pass` or catching `Exception` without logging
+- Hardcoded config values anywhere in code
+- Plain dicts for domain objects — use Pydantic models
+- `print()` for any output — use the logger
+- `async def` in service or data access layers — async only at the API boundary
+- Magic numbers or magic strings — use enums and named constants
+- Returning `None` from services to signal failure — raise a typed exception
+- Global mutable state
+- String concatenation for building queries, prompts, or structured content
+- Broad try/except blocks — keep try blocks as narrow as possible
+
+
 
 ### Python Patterns Used Here
 
@@ -235,7 +621,7 @@ No single-letter names (except `i`, `j` in loops). No abbreviations except `url`
 
 - **One test file per source module**: `app/payments.py` → `tests/test_payments.py`.
 - **Shared fixtures in `tests/conftest.py` only** — never duplicated across files.
-- `pytest -q` must stay green after every change. Baseline: 47 tests.
+- `pytest -q` must stay green after every change. Baseline: 104 tests (102 passing + 2 skipped, network-gated).
 
 ### What to Write
 
@@ -274,27 +660,186 @@ def test_validate_raises_on_spend_cap_exceeded() -> None: ...
 
 ### Backtesting & Optimization
 
-#### Backtesting
-- Run a backtest for a single strategy and symbol:
-  ```powershell
-  python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
-  ```
+#### Single-Symbol Backtest
+Run a backtest for one strategy and symbol:
+```powershell
+python -m app.backtest.runner --symbol NIFTY --strategy rsi_reversal --from 2025-01-01 --to 2025-04-01 --interval 5m
+```
 
-#### Optuna Hyperparameter Optimization
-- Run Optuna optimization for all 7 strategies on a symbol (default: last 5 years):
-  ```powershell
-  python optimize_all.py --symbol NIFTY
-  ```
-- This creates `config/params_nifty.yaml` with best params for each strategy. The live pipeline will auto-load these for that symbol.
-- To override date range or trials:
-  ```powershell
-  python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2025-01-01 --trials 50
-  ```
+#### Batch Backtest — Modes Overview
+`batch_backtest.py` supports multiple modes. Pick the mode based on what you want to validate.
 
-#### YAML Convention
-- Optimized params are always saved as `config/params_{symbol}.yaml` (lowercase symbol).
-- Each file contains a mapping of strategy name to its best parameters.
-- The live pipeline (SignalAgent) will use these automatically if present.
+Mode quick guide:
+- `baseline` (default): per-strategy isolated backtest using default params.
+- `--use-optimized`: per-strategy isolated backtest using `config/params_{symbol}.yaml`.
+- `--live-parity`: closer to runtime signal behavior (enabled strategies + ensemble selection from `.env`).
+- `--orchestrator-parity`: highest-fidelity entry path (signal -> validation -> risk -> execution in simulation mode).
+
+All modes append to:
+- `backtest/reports/results.csv`
+- `backtest/reports/trades.csv`
+
+#### Batch Backtest — Baseline and Optimized
+```powershell
+# Baseline run (default params):
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m
+
+# With optimized params (reads config/params_{symbol}.yaml per symbol):
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m --use-optimized
+
+# Custom capital / risk:
+python batch_backtest.py --watchlist nse20 --from 2025-01-01 --to 2026-01-01 --interval 5m --capital 50000 --risk-pct 1.5
+```
+Flags:
+- Symbol/date/data: `--watchlist nse20`, `--symbols ADANIENT VEDL`, `--from`, `--to`, `--interval`, `--exchange`
+- Risk/execution sim: `--capital`, `--lot-size`, `--risk-pct`, `--trailing-atr`
+- Param source: `--use-optimized`
+- Conviction mode: `--ensemble N`, `--min-confidence`
+- Runtime-parity modes: `--live-parity`, `--orchestrator-parity`
+
+#### Ensemble Backtest — Conviction Filter Simulation
+When `--ensemble N` is passed, `batch_backtest.py` also runs `run_ensemble_backtest()` which evaluates **all** strategies per bar and only enters a trade when N or more agree on the same side. This simulates the live pipeline's `min_strategy_agreement` logic.
+
+```powershell
+# Require 2 strategies to agree before entering (closest to live pipeline):
+python batch_backtest.py --symbols JSWSTEEL --from 2025-04-23 --to 2026-04-23 --interval 5m --use-optimized --ensemble 2
+
+# Full watchlist, ensemble 2, min confidence 0.6:
+python batch_backtest.py --watchlist nse20 --from 2025-04-23 --to 2026-04-23 --interval 5m --use-optimized --ensemble 2 --min-confidence 0.6
+```
+
+Results appear as strategy `"ensemble_2"` (or `"ensemble_N"`) in `results.csv`.
+
+**Key difference from single-strategy backtest**: Individual backtests test each strategy in isolation (no ensemble, no LLM, no risk gates). The ensemble backtest matches how the live pipeline filters trades — use it to get realistic trade counts and win rates.
+
+#### Live-Parity Backtest (from .env settings)
+Use this when you want `.env`-driven strategy/gate behavior with optimized params and ensemble selection logic.
+
+```powershell
+# Uses enabled strategies and gates from .env, plus optimized params.
+python batch_backtest.py --live-parity --symbols ZENTEC GRAVITA VEDL ADANIPORTS RECLTD --from 2026-03-24 --to 2026-04-24 --interval 5m
+
+# Override agreement threshold for this run only (instead of .env value)
+python batch_backtest.py --live-parity --ensemble 2 --symbols ZENTEC GRAVITA --from 2026-03-24 --to 2026-04-24 --interval 5m
+
+# Override confidence threshold for this run only
+python batch_backtest.py --live-parity --min-confidence 0.65 --symbols ZENTEC GRAVITA --from 2026-03-24 --to 2026-04-24 --interval 5m
+```
+
+Notes:
+- If `--ensemble` is omitted in live-parity mode, `.env` `MIN_STRATEGY_AGREEMENT` is used.
+- If `--min-confidence` is omitted in live-parity mode, `.env` `MIN_SIGNAL_CONFIDENCE` is used.
+
+#### Orchestrator-Parity Backtest (highest fidelity)
+Use this when you want backtest entry decisions to follow runtime pipeline order as closely as possible.
+
+Pipeline used per bar:
+- `SignalService` -> conviction selection -> `ValidationService` -> `RiskEngine` -> simulated `ExecutionService`
+
+```powershell
+# Full orchestrator-parity on selected symbols
+python batch_backtest.py --orchestrator-parity --symbols ZENTEC GRAVITA VEDL ADANIPORTS RECLTD --from 2026-03-24 --to 2026-04-24 --interval 5m
+
+# Same mode on the full watchlist
+python batch_backtest.py --orchestrator-parity --watchlist nse20 --from 2026-03-24 --to 2026-04-24 --interval 5m
+```
+
+Notes:
+- This mode is slower than baseline/optimized runs.
+- It is best used for final validation before paper/live deployment.
+
+#### env_backtest.py (date-only runner, config from .env)
+`env_backtest.py` is the easiest runner when you want to pass only dates.
+It auto-reads from `.env`:
+- symbols from `WATCHLIST`
+- strategies from `ENABLED_STRATEGIES`
+- gates and thresholds from settings
+
+```powershell
+# Default mode = orchestrator parity
+python env_backtest.py --from 2026-03-24 --to 2026-04-24
+
+# Explicit orchestrator mode
+python env_backtest.py --from 2026-03-24 --to 2026-04-24 --mode orchestrator
+
+# Live-parity mode (faster than orchestrator mode)
+python env_backtest.py --from 2026-03-24 --to 2026-04-24 --mode live-parity
+
+# Optional overrides
+python env_backtest.py --from 2026-03-24 --to 2026-04-24 --interval 5m --capital 25000 --lot-size 1 --risk-pct 1.0 --trailing-atr 0.0
+```
+
+Tip for API quota windows:
+- If Angel returns `AB1021 (Too many requests)`, retry with fewer symbols or narrower date range.
+
+#### Optuna Hyperparameter Optimization — Single Symbol
+Runs all 7 strategies for one symbol. Writes `config/params_{symbol}.yaml`. Trials persist in `config/optuna_studies.db` — re-runs add to existing trials (warm-start), they do not restart.
+```powershell
+# All 7 strategies, last 5 years (default), 100 trials:
+python optimize_all.py --symbol NIFTY
+
+# Override date range and trial count:
+python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2026-01-01 --trials 200
+
+# Optimize for win rate instead of Sortino ratio:
+python optimize_all.py --symbol NIFTY --from 2024-01-01 --to 2026-01-01 --trials 100 --metric win_rate
+```
+
+#### Batch Optimize — All Symbols
+`batch_optimize.py` (root) runs `optimize_all.py` for every symbol in a watchlist. Default: last 2 years, 100 trials per strategy.
+```powershell
+# Full NSE20 watchlist, 100 trials per strategy (default):
+python batch_optimize.py --watchlist nse20 --from 2024-04-23 --to 2026-04-23 --interval 5m
+
+# Quick 50-trial test on specific symbols:
+python batch_optimize.py --symbols JSWSTEEL BAJAJFINSV --trials 50 --from 2024-04-23 --to 2026-04-23
+```
+Flags: `--watchlist nse20`, `--symbols`, `--from`, `--to`, `--interval`, `--trials` (default 100)
+
+> **Note**: `TATAMOTORS` and `ZOMATO` are always skipped — Angel API token not found in local scrip master. `GRAVITA` may fail intermittently.
+
+#### Compare Backtest Runs (Baseline vs Optimized)
+`compare_backtest.py` (root) reads `backtest/reports/results.csv`, picks the last two `run_at` timestamps, and prints a side-by-side delta table (per-strategy and per-symbol P&L, trade count, profitable runs).
+```powershell
+# Auto-compare last two runs (baseline vs optimized):
+python compare_backtest.py
+
+# Pin specific runs by timestamp:
+python compare_backtest.py --baseline "2026-04-22 22:45:52" --optimized "2026-04-22 23:23:11"
+```
+
+#### YAML Convention & Optuna Persistence
+- Optimized params: `config/params_{symbol_lower}.yaml` (e.g. `params_jswsteel.yaml`).
+- Optuna study history: `config/optuna_studies.db` (SQLite). Each study is named `{strategy}__{symbol}`. Re-running adds trials without resetting — **warm-start is automatic**.
+- The live pipeline (`SignalAgent`) auto-loads `config/params_{symbol}.yaml` on startup for every enabled symbol.
+- To inspect stored trials: `optuna-dashboard sqlite:///config/optuna_studies.db` (requires `optuna-dashboard` package).
+
+#### Workflow: Baseline → Optimize → Validate → Compare
+```powershell
+# 1. Baseline backtest (records pre-optimization P&L)
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m
+
+# 2. Optimize (100 trials, 2yr data — results persist in optuna_studies.db)
+python batch_optimize.py --watchlist nse20 --from 2024-04-23 --to 2026-04-23 --trials 100
+
+# 3. Re-run backtest with optimized params
+python batch_backtest.py --watchlist nse20 --from 2025-04-01 --to 2026-04-23 --interval 5m --use-optimized
+
+# 4. Compare
+python compare_backtest.py
+```
+
+#### Research: Path to 80% Win Rate
+Current per-trade win rate ~45-50% from ~14k trades across 18 symbols. Stacked gates (implement in order) to reach 80%:
+1. Raise `min_strategy_agreement` to 3 in `.env` (cuts trade count >50%, keeps only highest-conviction)
+2. Volume confirmation: require volume > 1.5× 20-bar avg at entry
+3. ATR filter: skip signals when ATR < 0.5% of price
+4. Optimize with `--metric win_rate` instead of Sortino
+5. Hard regime gate: only momentum strats in trending regime, only mean-reversion in ranging
+6. R:R gate in RiskEngine: `target / SL ≥ 2.0`
+7. Walk-Forward Efficiency gate: only deploy params with `OOS_sortino / IS_sortino ≥ 0.7`
+
+See `docs/plan.md` sections 3H–3K for full detail.
 
 ---
 
@@ -333,7 +878,6 @@ These are real issues already identified by audit. Fix them opportunistically wh
 | `app/agents/signal_agent.py` | `generate()` lacks docstring | Low |
 | `app/services/llm_client.py` | `except Exception` in `chat_json` is intentionally broad but undocumented — add a comment | Low |
 | `app/services/angel_session.py` | Multiple `except Exception` blocks — each needs a comment explaining why | Medium |
-| `tests/` | No `conftest.py` — shared fixtures like `_sig()` and `_engine()` are duplicated across test files | Medium |
 | `tests/test_risk_engine.py` | Test helper `_sig()` not typed or docstringed | Low |
 | All `app/api/` routes | Route handlers lack docstrings (Swagger shows blank descriptions) | Low |
 | `app/engine/risk_engine.py` | `position_size()` docstring is one line — missing `Args/Returns` | Low |

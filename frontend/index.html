@@ -1,0 +1,1025 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Control Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg: #090d12;
+      --bg-soft: #111922;
+      --card: #12202b;
+      --card-2: #162b39;
+      --border: #224257;
+      --text: #e8f4ff;
+      --muted: #8fb0c6;
+      --primary: #0fd7c5;
+      --primary-2: #06b9a9;
+      --good: #3ee77a;
+      --bad: #ff6565;
+      --warn: #ffb23f;
+      --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      --mono: "IBM Plex Mono", "Consolas", monospace;
+      --sans: "Space Grotesk", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 10% 10%, rgba(15, 215, 197, 0.14), transparent 35%),
+        radial-gradient(circle at 90% 0%, rgba(255, 178, 63, 0.14), transparent 35%),
+        linear-gradient(180deg, #071017 0%, #0a141c 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .shell {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .topbar {
+      background: linear-gradient(135deg, var(--card), var(--card-2));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 18px;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 0 4px rgba(255, 178, 63, 0.2);
+      transition: all 0.2s;
+    }
+
+    .dot.live {
+      background: var(--good);
+      box-shadow: 0 0 0 4px rgba(62, 231, 122, 0.2);
+    }
+
+    .title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    button, .btn {
+      border: 1px solid var(--border);
+      background: var(--bg-soft);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      transition: 0.15s ease;
+    }
+
+    button:hover, .btn:hover { transform: translateY(-1px); border-color: var(--primary); }
+    .btn-primary { background: linear-gradient(90deg, var(--primary-2), var(--primary)); color: #062220; border: 0; font-weight: 700; }
+    .btn-danger { background: rgba(255, 101, 101, 0.16); border-color: #7f3e3e; color: #ffd9d9; }
+
+    .tabs {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tab {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(18, 32, 43, 0.6);
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.9rem;
+    }
+
+    .tab.active {
+      color: #041d1a;
+      font-weight: 700;
+      border-color: transparent;
+      background: linear-gradient(90deg, var(--primary), #58f3c0);
+    }
+
+    .page {
+      display: none;
+      margin-top: 14px;
+      gap: 12px;
+      grid-template-columns: repeat(12, 1fr);
+    }
+
+    .page.active { display: grid; }
+
+    .card {
+      border: 1px solid var(--border);
+      background: linear-gradient(160deg, rgba(18, 32, 43, 0.96), rgba(11, 24, 33, 0.96));
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+      min-height: 72px;
+    }
+
+    .card h3 { margin: 0 0 10px; font-size: 0.95rem; letter-spacing: 0.3px; }
+    .tiny { color: var(--muted); font-size: 0.82rem; }
+    .mono { font-family: var(--mono); }
+
+    .stats { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(120px, 1fr)); }
+    .stat .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; }
+    .stat .value { font-size: 1.45rem; font-weight: 700; margin-top: 2px; }
+
+    .grid-12 { grid-column: span 12; }
+    .grid-8 { grid-column: span 8; }
+    .grid-7 { grid-column: span 7; }
+    .grid-6 { grid-column: span 6; }
+    .grid-5 { grid-column: span 5; }
+    .grid-4 { grid-column: span 4; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.87rem;
+    }
+
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid rgba(143, 176, 198, 0.2);
+      padding: 8px 6px;
+      vertical-align: middle;
+    }
+
+    th { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.6px; }
+
+    .scroll { max-height: 360px; overflow: auto; }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0c151c;
+      color: var(--text);
+      padding: 9px 10px;
+      font-family: var(--sans);
+      font-size: 0.9rem;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .f-6 { grid-column: span 6; }
+    .f-4 { grid-column: span 4; }
+    .f-3 { grid-column: span 3; }
+    .f-2 { grid-column: span 2; }
+
+    .pill {
+      border-radius: 999px;
+      display: inline-block;
+      padding: 3px 10px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .pill-buy { background: rgba(62, 231, 122, 0.17); color: #8ff7b4; }
+    .pill-sell { background: rgba(255, 101, 101, 0.18); color: #ffd3d3; }
+    .pill-open { background: rgba(15, 215, 197, 0.16); color: #9ff8ef; }
+    .pill-closed { background: rgba(143, 176, 198, 0.16); color: #d6e9f7; }
+
+    .good { color: var(--good); }
+    .bad { color: var(--bad); }
+    .warn { color: var(--warn); }
+
+    .logs {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      line-height: 1.35;
+      max-height: 280px;
+      overflow: auto;
+      background: rgba(7, 14, 20, 0.9);
+      border: 1px solid rgba(143, 176, 198, 0.2);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .toast-wrap {
+      position: fixed;
+      right: 12px;
+      top: 12px;
+      width: min(340px, calc(100% - 24px));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 999;
+    }
+
+    .toast {
+      background: #0f202b;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: var(--shadow);
+      font-size: 0.84rem;
+    }
+
+    .chart-box {
+      height: 260px;
+      border: 1px solid rgba(143, 176, 198, 0.2);
+      border-radius: 12px;
+      background: rgba(8, 13, 19, 0.9);
+    }
+
+    .drawer {
+      position: fixed;
+      right: 0;
+      top: 0;
+      width: min(640px, 100%);
+      height: 100%;
+      background: #08131b;
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 0.2s;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer.open { transform: translateX(0); }
+    .drawer-head { padding: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .drawer-body { padding: 12px; overflow: auto; }
+
+    @media (max-width: 980px) {
+      .grid-8, .grid-7, .grid-6, .grid-5, .grid-4 { grid-column: span 12; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .f-6, .f-4, .f-3, .f-2 { grid-column: span 12; }
+      .topbar { grid-template-columns: 1fr; }
+      .actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toast-wrap" id="toasts"></div>
+  <div class="shell">
+    <div class="topbar">
+      <div class="brand">
+        <span id="liveDot" class="dot"></span>
+        <div>
+          <div class="title">Trading Control Center</div>
+          <div class="sub" id="subline">Connecting to backend...</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="btnStart">Start Scheduler</button>
+        <button id="btnStop">Stop Scheduler</button>
+        <button id="btnReload">Reload Config</button>
+        <button id="btnKill" class="btn-danger">Toggle Kill Switch</button>
+        <button id="btnForceClose" class="btn-danger">Force Close All</button>
+      </div>
+    </div>
+
+    <div class="tabs" id="tabs"></div>
+
+    <section id="page-dashboard" class="page active">
+      <div class="card grid-12">
+        <div class="stats">
+          <div class="stat"><div class="label">PnL Today</div><div class="value" id="statPnl">--</div></div>
+          <div class="stat"><div class="label">Open Positions</div><div class="value" id="statOpen">--</div></div>
+          <div class="stat"><div class="label">Trades Today</div><div class="value" id="statTrades">--</div></div>
+          <div class="stat"><div class="label">Win Rate</div><div class="value" id="statWin">--</div></div>
+        </div>
+      </div>
+      <div class="card grid-8">
+        <h3>Open Positions (Live)</h3>
+        <div class="scroll"><table><thead><tr><th>Trade</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Last</th><th>PnL</th><th>Status</th></tr></thead><tbody id="openRows"></tbody></table></div>
+      </div>
+      <div class="card grid-4">
+        <h3>Scheduler Feed</h3>
+        <div id="schedulerFeed" class="logs"></div>
+      </div>
+      <div class="card grid-8">
+        <h3>Trade PnL Chart</h3>
+        <div class="chart-box" id="pnlChart"></div>
+      </div>
+      <div class="card grid-4">
+        <h3>Recent Signals</h3>
+        <div id="signalFeed" class="logs"></div>
+      </div>
+    </section>
+
+    <section id="page-watchlist" class="page">
+      <div class="card grid-4">
+        <h3>Add Symbol</h3>
+        <div class="row">
+          <div class="f-12"><label>Search<input id="wlSearch" placeholder="Type RELIANCE, NIFTY, BANK..." /></label></div>
+          <div class="f-6"><label>Symbol<input id="wlSymbol" placeholder="NIFTY" /></label></div>
+          <div class="f-6"><label>Exchange<select id="wlExchange"><option>NSE</option><option>NFO</option><option>BSE</option></select></label></div>
+        </div>
+        <div id="wlSearchResults" class="logs" style="max-height:160px;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-primary" id="btnAddSymbol">Add to Watchlist</button>
+          <button id="btnPersistWatchlist">Persist To .env</button>
+        </div>
+      </div>
+      <div class="card grid-8">
+        <h3>Active Watchlist</h3>
+        <div class="scroll"><table><thead><tr><th>Symbol</th><th>Exchange</th><th>Optimized</th><th>Action</th></tr></thead><tbody id="wlRows"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="page-strategies" class="page">
+      <div class="card grid-6">
+        <h3>Strategy Switches</h3>
+        <div class="row">
+          <div class="f-6"><label>Enabled Strategies (comma separated)<input id="cfgStrategies" /></label></div>
+          <div class="f-3"><label>Min Agreement<input id="cfgAgreement" type="number" min="1" max="7" /></label></div>
+          <div class="f-3"><label>Min Confidence<input id="cfgMinConf" type="number" step="0.01" min="0" max="1" /></label></div>
+        </div>
+        <div class="row">
+          <div class="f-4"><label><input id="cfgRegime" type="checkbox" /> Regime Filter</label></div>
+          <div class="f-4"><label><input id="cfgHTF" type="checkbox" /> HTF Agreement</label></div>
+          <div class="f-4"><label><input id="cfgKelly" type="checkbox" /> Kelly Sizing</label></div>
+        </div>
+        <button class="btn-primary" id="btnSaveStrategies">Save Strategy Config</button>
+      </div>
+      <div class="card grid-6">
+        <h3>Symbol Params (YAML-backed)</h3>
+        <div class="row">
+          <div class="f-6"><label>Symbol<input id="paramSymbol" placeholder="JSWSTEEL" /></label></div>
+          <div class="f-6"><button id="btnLoadParams">Load Params</button></div>
+        </div>
+        <textarea id="paramEditor" rows="15" class="mono" placeholder="Paste JSON object for strategy params"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn-primary" id="btnSaveParams">Save Params</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-optimize" class="page">
+      <div class="card grid-4">
+        <h3>Run Optimization</h3>
+        <div class="row">
+          <div class="f-6"><label>Symbol<input id="optSymbol" value="NIFTY" /></label></div>
+          <div class="f-6"><label>Trials<input id="optTrials" type="number" min="1" value="100" /></label></div>
+          <div class="f-6"><label>From<input id="optFrom" type="date" value="2024-01-01" /></label></div>
+          <div class="f-6"><label>To<input id="optTo" type="date" /></label></div>
+          <div class="f-6"><label>Interval<select id="optInterval"><option>1m</option><option selected>5m</option><option>15m</option><option>30m</option><option>1h</option></select></label></div>
+          <div class="f-6"><label>Metric<select id="optMetric"><option selected>sortino</option><option>sharpe</option><option>win_rate</option></select></label></div>
+        </div>
+        <button class="btn-primary" id="btnRunOpt">Run</button>
+      </div>
+      <div class="card grid-8">
+        <h3>Optimization Stream</h3>
+        <div id="optLog" class="logs" style="max-height:420px"></div>
+      </div>
+      <div class="card grid-12">
+        <h3>Recent Optimization Jobs</h3>
+        <div class="scroll"><table><thead><tr><th>Job</th><th>Symbol</th><th>Status</th><th>Return</th><th>Created</th><th>Finished</th><th>Action</th></tr></thead><tbody id="optJobsRows"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="page-trades" class="page">
+      <div class="card grid-12">
+        <div class="row">
+          <div class="f-3"><label>Limit<input id="tradeLimit" type="number" value="100" min="1" /></label></div>
+          <div class="f-3"><button id="btnLoadTrades">Reload Trades</button></div>
+        </div>
+        <div class="scroll"><table><thead><tr><th>#</th><th>Time</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Status</th><th>Action</th></tr></thead><tbody id="tradeRows"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="page-signals" class="page">
+      <div class="card grid-12">
+        <div class="row">
+          <div class="f-3"><label>Limit<input id="signalLimit" type="number" value="150" min="1" /></label></div>
+          <div class="f-3"><button id="btnLoadSignals">Reload Signals</button></div>
+        </div>
+        <div class="scroll"><table><thead><tr><th>#</th><th>Time</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Conf</th><th>AI</th><th>Reason</th></tr></thead><tbody id="signalRows"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="page-risk" class="page">
+      <div class="card grid-6">
+        <h3>Risk Controls</h3>
+        <div class="row">
+          <div class="f-6"><label>Capital INR<input id="riskCapital" type="number" step="1" /></label></div>
+          <div class="f-6"><label>Max Risk / Trade %<input id="riskTradePct" type="number" step="0.1" /></label></div>
+          <div class="f-6"><label>Max Daily Loss %<input id="riskDailyPct" type="number" step="0.1" /></label></div>
+          <div class="f-6"><label>Max Open Positions<input id="riskOpen" type="number" min="1" /></label></div>
+          <div class="f-6"><label>Max Trades / Day<input id="riskTrades" type="number" min="1" /></label></div>
+        </div>
+        <button class="btn-primary" id="btnSaveRisk">Save Risk Config</button>
+      </div>
+      <div class="card grid-6">
+        <h3>AI Controls</h3>
+        <div class="row">
+          <div class="f-6"><label>OpenRouter Enabled<select id="aiEnabled"><option value="true">true</option><option value="false">false</option></select></label></div>
+          <div class="f-6"><label>Daily USD Cap<input id="aiCap" type="number" step="0.01" /></label></div>
+          <div class="f-12"><label>Model<input id="aiModel" /></label></div>
+          <div class="f-6"><label>Fallback Threshold<input id="aiFallback" type="number" step="0.01" min="0" max="1" /></label></div>
+        </div>
+        <button class="btn-primary" id="btnSaveAI">Save AI Config</button>
+      </div>
+    </section>
+  </div>
+
+  <aside class="drawer" id="tradeDrawer">
+    <div class="drawer-head">
+      <strong id="drawerTitle">Trade</strong>
+      <button onclick="closeDrawer()">Close</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+
+<script>
+const API = "http://127.0.0.1:8000";
+const WS_URL = API.replace("http://", "ws://").replace("https://", "wss://") + "/ws/live";
+
+const state = {
+  ws: null,
+  config: null,
+  trades: [],
+  signals: [],
+  openTradeMap: new Map(),
+  latestPrices: {},
+  schedulerLog: [],
+  chart: null,
+  chartSeries: null,
+  chartData: [],
+};
+
+const tabs = [
+  ["dashboard", "Dashboard"],
+  ["watchlist", "Watchlist"],
+  ["strategies", "Strategies"],
+  ["optimize", "Optimize"],
+  ["trades", "Trades"],
+  ["signals", "Signals"],
+  ["risk", "Risk"],
+];
+
+function toast(msg, kind="info") {
+  const wrap = document.getElementById("toasts");
+  const t = document.createElement("div");
+  t.className = "toast";
+  if (kind === "error") t.style.borderLeftColor = "#ff6565";
+  if (kind === "success") t.style.borderLeftColor = "#3ee77a";
+  t.textContent = msg;
+  wrap.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+async function api(path, options={}) {
+  const res = await fetch(API + path, options);
+  const data = await res.json();
+  if (data && Object.prototype.hasOwnProperty.call(data, "result")) return data.result;
+  return data;
+}
+
+function addLog(targetId, text) {
+  const box = document.getElementById(targetId);
+  const now = new Date().toLocaleTimeString();
+  box.textContent = `[${now}] ${text}\n` + box.textContent;
+}
+
+function setupTabs() {
+  const tabsEl = document.getElementById("tabs");
+  tabs.forEach(([id, label], i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === 0 ? " active" : "");
+    b.textContent = label;
+    b.onclick = () => {
+      document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+      document.getElementById(`page-${id}`).classList.add("active");
+    };
+    tabsEl.appendChild(b);
+  });
+}
+
+function setupChart() {
+  const box = document.getElementById("pnlChart");
+  state.chart = LightweightCharts.createChart(box, {
+    layout: { background: { color: "#08131b" }, textColor: "#9dc2da" },
+    rightPriceScale: { borderColor: "#224257" },
+    timeScale: { borderColor: "#224257" },
+    grid: { vertLines: { color: "rgba(34,66,87,0.3)" }, horzLines: { color: "rgba(34,66,87,0.3)" } },
+  });
+  state.chartSeries = state.chart.addAreaSeries({
+    lineColor: "#0fd7c5",
+    topColor: "rgba(15,215,197,0.32)",
+    bottomColor: "rgba(15,215,197,0.03)",
+  });
+  window.addEventListener("resize", () => state.chart.applyOptions({ width: box.clientWidth }));
+}
+
+function sidePill(side) {
+  return `<span class="pill ${side === "BUY" ? "pill-buy" : "pill-sell"}">${side}</span>`;
+}
+
+function statusPill(status) {
+  return `<span class="pill ${status === "OPEN" ? "pill-open" : "pill-closed"}">${status}</span>`;
+}
+
+function fmtPnl(v) {
+  if (v == null) return "--";
+  const n = Number(v);
+  const cls = n > 0 ? "good" : n < 0 ? "bad" : "warn";
+  const sign = n > 0 ? "+" : "";
+  return `<span class="${cls}">${sign}${n.toFixed(2)}</span>`;
+}
+
+function updateOpenRows() {
+  const rows = [...state.trades].filter(t => t.status === "OPEN");
+  const body = document.getElementById("openRows");
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="7" class="tiny">No open positions</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map(t => {
+    const px = state.latestPrices[t.symbol] ?? t.entry_price;
+    const pnl = (Number(px) - Number(t.entry_price)) * Number(t.qty) * (t.side === "BUY" ? 1 : -1);
+    return `<tr>
+      <td class="mono">#${t.id}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td>${sidePill(t.side)}</td>
+      <td class="mono">${Number(t.entry_price).toFixed(2)}</td>
+      <td class="mono">${Number(px).toFixed(2)}</td>
+      <td>${fmtPnl(pnl)}</td>
+      <td>${statusPill(t.status)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function updateStats(report) {
+  document.getElementById("statPnl").innerHTML = fmtPnl(report.summary.total_pnl || 0);
+  document.getElementById("statOpen").textContent = String(report.summary.trades_still_open || 0);
+  document.getElementById("statTrades").textContent = String(report.summary.trades_taken || 0);
+  document.getElementById("statWin").textContent = `${Number(report.summary.win_rate_pct || 0).toFixed(1)}%`;
+}
+
+function pushChartPoint(pnl) {
+  const t = Math.floor(Date.now() / 1000);
+  const last = state.chartData.length ? state.chartData[state.chartData.length - 1].value : 0;
+  const next = last + Number(pnl || 0);
+  state.chartData.push({ time: t, value: next });
+  state.chartSeries.setData(state.chartData);
+}
+
+function renderWatchlist(rows) {
+  const body = document.getElementById("wlRows");
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td><strong>${r.symbol}</strong></td>
+      <td>${r.exchange}</td>
+      <td>${r.yaml_exists ? `${r.strategies_optimized}/7` : "no"}</td>
+      <td><button onclick="removeSymbol('${r.symbol}')">Remove</button></td>
+    </tr>
+  `).join("");
+}
+
+function renderTrades() {
+  const body = document.getElementById("tradeRows");
+  body.innerHTML = state.trades.map(t => `
+    <tr>
+      <td class="mono">${t.id}</td>
+      <td>${(t.opened_at || "").replace("T", " ").slice(0, 19)}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td>${t.strategy || "--"}</td>
+      <td>${sidePill(t.side)}</td>
+      <td class="mono">${Number(t.entry_price).toFixed(2)}</td>
+      <td class="mono">${t.exit_price == null ? "--" : Number(t.exit_price).toFixed(2)}</td>
+      <td>${fmtPnl(t.pnl)}</td>
+      <td>${statusPill(t.status)}</td>
+      <td><button onclick="openTrade(${t.id})">View</button></td>
+    </tr>
+  `).join("");
+  updateOpenRows();
+}
+
+function renderSignals() {
+  const body = document.getElementById("signalRows");
+  body.innerHTML = state.signals.map(s => `
+    <tr>
+      <td class="mono">${s.id}</td>
+      <td>${(s.created_at || "").replace("T", " ").slice(0, 19)}</td>
+      <td><strong>${s.symbol}</strong></td>
+      <td>${s.strategy}</td>
+      <td>${sidePill(s.side)}</td>
+      <td class="mono">${Number(s.confidence || 0).toFixed(2)}</td>
+      <td>${s.ai_approved === true ? "yes" : s.ai_approved === false ? "no" : "--"}</td>
+      <td class="tiny">${s.ai_reasoning || "--"}</td>
+    </tr>
+  `).join("");
+}
+
+function renderOptimizeJobs(rows) {
+  const body = document.getElementById("optJobsRows");
+  body.innerHTML = (rows || []).map(r => `
+    <tr>
+      <td class="mono">${r.job_id}</td>
+      <td><strong>${r.symbol || "--"}</strong></td>
+      <td>${r.status || "--"}</td>
+      <td class="mono">${r.returncode == null ? "--" : r.returncode}</td>
+      <td>${r.created_at || "--"}</td>
+      <td>${r.finished_at || "--"}</td>
+      <td>${r.status === "running" ? `<button onclick="cancelOptimizeJob('${r.job_id}')">Cancel</button>` : "--"}</td>
+    </tr>
+  `).join("");
+}
+
+async function cancelOptimizeJob(jobId) {
+  const out = await api(`/optimize/cancel/${jobId}`, { method: "POST" });
+  if (out.cancelled) {
+    toast(`Cancelled job ${jobId}`, "success");
+  } else {
+    toast(`Cancel failed: ${out.reason || "unknown"}`, "error");
+  }
+  refreshAll();
+}
+window.cancelOptimizeJob = cancelOptimizeJob;
+
+function renderSymbolSearch(rows) {
+  const box = document.getElementById("wlSearchResults");
+  if (!rows || !rows.length) {
+    box.textContent = "No matches";
+    return;
+  }
+  box.innerHTML = rows.map(r => (
+    `<div style="padding:6px 0;border-bottom:1px solid rgba(143,176,198,0.18);cursor:pointer;" onclick="pickSymbol('${r.symbol}','${r.exchange}')">` +
+    `<strong>${r.symbol}</strong> <span class="tiny">${r.exchange}</span> <span class="tiny">${r.name || ""}</span>` +
+    `</div>`
+  )).join("");
+}
+
+async function refreshAll() {
+  try {
+    const [runner, report, tradesRes, signalsRes, watchRes, cfg, jobsRes] = await Promise.all([
+      api("/runner/status"),
+      api("/report/today"),
+      api(`/trades?limit=${Number(document.getElementById("tradeLimit")?.value || 100)}`),
+      api(`/signals?limit=${Number(document.getElementById("signalLimit")?.value || 150)}`),
+      api("/watchlist"),
+      api("/config"),
+      api("/optimize/jobs?limit=50"),
+    ]);
+
+    state.config = cfg;
+    state.trades = tradesRes.trades || [];
+    state.signals = signalsRes.signals || [];
+
+    updateStats(report);
+    renderTrades();
+    renderSignals();
+    renderWatchlist(watchRes.symbols || []);
+    renderOptimizeJobs(jobsRes.jobs || []);
+
+    document.getElementById("liveDot").classList.toggle("live", Boolean(runner.running));
+    document.getElementById("subline").textContent = `Scheduler: ${runner.running ? "RUNNING" : "STOPPED"} | ticks=${runner.ticks} | open=${report.summary.trades_still_open}`;
+
+    bindConfigToInputs(cfg);
+  } catch (err) {
+    toast(`Refresh failed: ${err.message || err}`, "error");
+  }
+}
+
+async function searchSymbols(query) {
+  const q = (query || "").trim();
+  if (!q) {
+    document.getElementById("wlSearchResults").textContent = "";
+    return;
+  }
+  const out = await api(`/watchlist/search?q=${encodeURIComponent(q)}&exchange=${encodeURIComponent(document.getElementById("wlExchange").value)}&limit=20`);
+  renderSymbolSearch(out.results || []);
+}
+
+function pickSymbol(symbol, exchange) {
+  document.getElementById("wlSymbol").value = (symbol || "").toUpperCase();
+  if (["NSE", "NFO", "BSE"].includes(exchange)) {
+    document.getElementById("wlExchange").value = exchange;
+  }
+}
+window.pickSymbol = pickSymbol;
+
+function bindConfigToInputs(cfg) {
+  document.getElementById("cfgStrategies").value = cfg.enabled_strategies || "";
+  document.getElementById("cfgAgreement").value = cfg.min_strategy_agreement ?? 2;
+  document.getElementById("cfgMinConf").value = cfg.min_signal_confidence ?? 0.5;
+  document.getElementById("cfgRegime").checked = Boolean(cfg.regime_filter_enabled);
+  document.getElementById("cfgHTF").checked = Boolean(cfg.require_htf_agreement);
+  document.getElementById("cfgKelly").checked = Boolean(cfg.kelly_sizing_enabled);
+
+  document.getElementById("riskCapital").value = cfg.capital_inr ?? 25000;
+  document.getElementById("riskTradePct").value = cfg.max_risk_per_trade_pct ?? 1;
+  document.getElementById("riskDailyPct").value = cfg.max_daily_loss_pct ?? 2;
+  document.getElementById("riskOpen").value = cfg.max_open_positions ?? 3;
+  document.getElementById("riskTrades").value = cfg.max_trades_per_day ?? 5;
+
+  document.getElementById("aiEnabled").value = String(Boolean(cfg.openrouter_enabled));
+  document.getElementById("aiCap").value = cfg.openrouter_daily_usd_cap ?? 0.3;
+  document.getElementById("aiModel").value = cfg.openrouter_model || "";
+  document.getElementById("aiFallback").value = cfg.ai_fallback_approve_threshold ?? 0.6;
+}
+
+function connectWs() {
+  if (state.ws) state.ws.close();
+  const ws = new WebSocket(WS_URL);
+  state.ws = ws;
+
+  ws.onopen = () => {
+    addLog("schedulerFeed", "WebSocket connected");
+    document.getElementById("subline").textContent += " | WS connected";
+    toast("Live stream connected", "success");
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    const type = msg.type;
+    const data = msg.data || {};
+
+    if (type === "tick_summary") {
+      addLog("schedulerFeed", `tick=${data.tick} fetched=${data.symbols_fetched} opened=${data.trades_opened} closed=${data.mtm_closed}`);
+    } else if (type === "trade_opened") {
+      addLog("schedulerFeed", `OPEN ${data.symbol} ${data.side} qty=${data.qty} @ ${data.entry_price}`);
+      addLog("signalFeed", `OPEN ${data.symbol} ${data.strategy} conf=${Number(data.confidence || 0).toFixed(2)}`);
+      notifyDesktop(`Trade opened ${data.symbol}`, `${data.side} ${data.qty} @ ${Number(data.entry_price || 0).toFixed(2)}`);
+      toast(`Trade opened ${data.symbol} ${data.side}`, "success");
+      refreshTradesOnly();
+    } else if (type === "trade_closed") {
+      addLog("schedulerFeed", `CLOSE ${data.symbol} pnl=${Number(data.pnl || 0).toFixed(2)} reason=${data.reason}`);
+      pushChartPoint(Number(data.pnl || 0));
+      notifyDesktop(`Trade closed ${data.symbol}`, `PnL ${Number(data.pnl || 0).toFixed(2)}`);
+      toast(`Trade closed ${data.symbol} pnl=${Number(data.pnl || 0).toFixed(2)}`);
+      refreshTradesOnly();
+    } else if (type === "signal_generated") {
+      addLog("signalFeed", `${data.symbol} ${data.strategy} ${data.side} conf=${Number(data.confidence || 0).toFixed(2)} risk=${data.risk_reason || "--"}`);
+    } else if (type === "eod_summary") {
+      addLog("schedulerFeed", `EOD ${data.date_ist} trades=${data.trades_today} opened=${data.trades_opened} pnl=${Number(data.realized_pnl || 0).toFixed(2)}`);
+      toast(`EOD summary ready: PnL ${Number(data.realized_pnl || 0).toFixed(2)}`);
+    } else if (type === "mtm_update") {
+      state.latestPrices = data.prices || {};
+      updateOpenRows();
+    }
+  };
+
+  ws.onclose = () => {
+    addLog("schedulerFeed", "WebSocket disconnected, retrying in 2s");
+    setTimeout(connectWs, 2000);
+  };
+
+  ws.onerror = () => {
+    toast("WebSocket error", "error");
+  };
+}
+
+async function refreshTradesOnly() {
+  const tradesRes = await api(`/trades?limit=${Number(document.getElementById("tradeLimit").value || 100)}`);
+  state.trades = tradesRes.trades || [];
+  renderTrades();
+}
+
+async function removeSymbol(sym) {
+  await api(`/watchlist/${sym}`, { method: "DELETE" });
+  toast(`Removed ${sym}`);
+  refreshAll();
+}
+window.removeSymbol = removeSymbol;
+
+async function openTrade(id) {
+  const payload = await api(`/trades/${id}/lifecycle`);
+  const t = payload.trade;
+  const logs = payload.audit_trail || [];
+  const box = document.getElementById("drawerBody");
+  document.getElementById("drawerTitle").textContent = `Trade #${id} ${t.symbol}`;
+  box.innerHTML = `
+    <div class="card" style="padding:10px;">
+      <div><strong>${t.symbol}</strong> ${sidePill(t.side)} ${statusPill(t.status)}</div>
+      <div class="tiny">Entry ${Number(t.entry_price).toFixed(2)} | Exit ${t.exit_price == null ? "--" : Number(t.exit_price).toFixed(2)} | Qty ${t.qty}</div>
+      <div class="tiny">PnL: ${fmtPnl(t.pnl)}</div>
+    </div>
+    <div class="card" style="margin-top:10px;">
+      <h3>Audit Trail</h3>
+      <div class="logs" style="max-height:360px">${logs.map(x => `${x.at || "--"} | ${x.event} | ${JSON.stringify(x.payload || {})}`).join("\n") || "No events"}</div>
+    </div>
+  `;
+  document.getElementById("tradeDrawer").classList.add("open");
+}
+window.openTrade = openTrade;
+
+function closeDrawer() { document.getElementById("tradeDrawer").classList.remove("open"); }
+window.closeDrawer = closeDrawer;
+
+async function runOptimization() {
+  const body = {
+    symbol: document.getElementById("optSymbol").value.trim().toUpperCase(),
+    from_date: document.getElementById("optFrom").value,
+    to_date: document.getElementById("optTo").value,
+    trials: Number(document.getElementById("optTrials").value || 100),
+    interval: document.getElementById("optInterval").value,
+    metric: document.getElementById("optMetric").value,
+  };
+  const out = await api("/optimize/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!out.started) {
+    toast("Optimization did not start", "error");
+    return;
+  }
+  const logBox = document.getElementById("optLog");
+  logBox.textContent = `Job ${out.job_id} started\n`;
+  const es = new EventSource(`${API}/optimize/stream/${out.job_id}`);
+  es.onmessage = (ev) => {
+    logBox.textContent = ev.data + "\n" + logBox.textContent;
+    if (ev.data.startsWith("__DONE__")) {
+      es.close();
+      toast("Optimization finished", "success");
+      refreshAll();
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    toast("Optimization stream disconnected", "error");
+  };
+}
+
+function notifyDesktop(title, body) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    new Notification(title, { body });
+  }
+}
+
+async function saveConfigPatch(payload, msg) {
+  await api("/config", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  toast(msg || "Config updated", "success");
+  await api("/config/reload", { method: "POST" });
+  refreshAll();
+}
+
+function bindEvents() {
+  document.getElementById("btnStart").onclick = async () => { await api("/runner/start", { method: "POST" }); toast("Scheduler start requested"); refreshAll(); };
+  document.getElementById("btnStop").onclick = async () => { await api("/runner/stop", { method: "POST" }); toast("Scheduler stop requested"); refreshAll(); };
+  document.getElementById("btnReload").onclick = async () => { await api("/config/reload", { method: "POST" }); toast("Config reloaded"); refreshAll(); };
+  document.getElementById("btnKill").onclick = async () => {
+    const cfg = await api("/config");
+    const next = !cfg.kill_switch;
+    await saveConfigPatch({ kill_switch: next }, `Kill switch ${next ? "ON" : "OFF"}`);
+  };
+  document.getElementById("btnForceClose").onclick = async () => {
+    const out = await api("/admin/force-close-all", { method: "POST" });
+    toast(`Force closed ${out.closed} trades`, "success");
+    refreshAll();
+  };
+
+  document.getElementById("btnAddSymbol").onclick = async () => {
+    const symbol = document.getElementById("wlSymbol").value.trim().toUpperCase();
+    const exchange = document.getElementById("wlExchange").value;
+    if (!symbol) return toast("Symbol required", "error");
+    await api("/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, exchange }),
+    });
+    toast(`Added ${symbol}`, "success");
+    document.getElementById("wlSymbol").value = "";
+    refreshAll();
+  };
+
+  document.getElementById("btnPersistWatchlist").onclick = async () => {
+    const out = await api("/watchlist/persist", { method: "POST" });
+    if (out.persisted) {
+      toast("Watchlist persisted to .env", "success");
+    } else {
+      toast("Watchlist persist failed", "error");
+    }
+  };
+
+  let searchTimer = null;
+  document.getElementById("wlSearch").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    const v = e.target.value;
+    searchTimer = setTimeout(() => { searchSymbols(v); }, 250);
+  });
+  document.getElementById("wlExchange").addEventListener("change", () => {
+    searchSymbols(document.getElementById("wlSearch").value);
+  });
+
+  document.getElementById("btnSaveStrategies").onclick = async () => {
+    await saveConfigPatch({
+      enabled_strategies: document.getElementById("cfgStrategies").value,
+      min_strategy_agreement: Number(document.getElementById("cfgAgreement").value),
+      min_signal_confidence: Number(document.getElementById("cfgMinConf").value),
+      regime_filter_enabled: document.getElementById("cfgRegime").checked,
+      require_htf_agreement: document.getElementById("cfgHTF").checked,
+      kelly_sizing_enabled: document.getElementById("cfgKelly").checked,
+    }, "Strategy config saved");
+  };
+
+  document.getElementById("btnSaveRisk").onclick = async () => {
+    await saveConfigPatch({
+      capital_inr: Number(document.getElementById("riskCapital").value),
+      max_risk_per_trade_pct: Number(document.getElementById("riskTradePct").value),
+      max_daily_loss_pct: Number(document.getElementById("riskDailyPct").value),
+      max_open_positions: Number(document.getElementById("riskOpen").value),
+      max_trades_per_day: Number(document.getElementById("riskTrades").value),
+    }, "Risk config saved");
+  };
+
+  document.getElementById("btnSaveAI").onclick = async () => {
+    await saveConfigPatch({
+      openrouter_enabled: document.getElementById("aiEnabled").value === "true",
+      openrouter_daily_usd_cap: Number(document.getElementById("aiCap").value),
+      openrouter_model: document.getElementById("aiModel").value,
+      ai_fallback_approve_threshold: Number(document.getElementById("aiFallback").value),
+    }, "AI config saved");
+  };
+
+  document.getElementById("btnLoadTrades").onclick = refreshAll;
+  document.getElementById("btnLoadSignals").onclick = refreshAll;
+  document.getElementById("btnRunOpt").onclick = runOptimization;
+
+  document.getElementById("btnLoadParams").onclick = async () => {
+    const sym = document.getElementById("paramSymbol").value.trim().toUpperCase();
+    if (!sym) return toast("Symbol required", "error");
+    const out = await api(`/config/params/${sym}`);
+    document.getElementById("paramEditor").value = JSON.stringify(out.params || {}, null, 2);
+  };
+
+  document.getElementById("btnSaveParams").onclick = async () => {
+    const sym = document.getElementById("paramSymbol").value.trim().toUpperCase();
+    if (!sym) return toast("Symbol required", "error");
+    let parsed;
+    try { parsed = JSON.parse(document.getElementById("paramEditor").value || "{}"); }
+    catch { return toast("Params must be valid JSON", "error"); }
+    await api(`/config/params/${sym}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parsed),
+    });
+    toast(`Params saved for ${sym}`, "success");
+  };
+}
+
+(async function boot() {
+  setupTabs();
+  setupChart();
+  bindEvents();
+
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+
+  connectWs();
+  await refreshAll();
+  setInterval(refreshAll, 30000);
+})();
+</script>
+</body>
+</html>

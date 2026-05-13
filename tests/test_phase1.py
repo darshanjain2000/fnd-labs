@@ -1,4 +1,5 @@
 """Phase 1 regressions: parallel candle fetch + AI confidence/source persistence."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,52 +8,23 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.config import Settings
 from app.engine.orchestrator import Orchestrator
-from app.models import Base
 from app.models.trade import Signal
-from app.services.broker.paper_broker import PaperBroker
-from app.services.market_data import compute_indicators
-
-
-def _make_db_factory():
-    engine = create_engine(
-        "sqlite:///:memory:", future=True, connect_args={"check_same_thread": False}
-    )
-    Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-
-
-def _oversold_candles() -> pd.DataFrame:
-    closes = list(np.linspace(200, 100, 60))
-    df = pd.DataFrame({
-        "open": closes,
-        "high": [c * 1.005 for c in closes],
-        "low": [c * 0.995 for c in closes],
-        "close": closes,
-        "volume": [1000] * len(closes),
-    })
-    return compute_indicators(df)
-
-
-def _permissive_settings() -> Settings:
-    """Return settings with min_strategy_agreement=1 so single-strategy tests pass."""
-    return Settings(mode="paper", min_strategy_agreement=1, min_signal_confidence=0.0)
 
 
 # ---------- 1. AI confidence + source are persisted on the Signal row -------
 
-def test_orchestrator_persists_ai_confidence_and_source():
-    factory = _make_db_factory()
-    broker = PaperBroker(quote_fn=lambda s: 100.0)
+
+def test_orchestrator_persists_ai_confidence_and_source(
+    db_factory, make_paper_broker, make_settings, make_candles
+):
+    factory = db_factory()
+    broker = make_paper_broker()
     orch = Orchestrator(broker=broker, session_factory=factory)
 
-    with patch("app.engine.orchestrator.get_settings", return_value=_permissive_settings()):
-        outcomes = orch.run("TEST", _oversold_candles())
+    with patch("app.engine.orchestrator.get_settings", return_value=make_settings()):
+        outcomes = orch.run("TEST", make_candles())
     assert outcomes, "expected at least one outcome"
     o = outcomes[0]
 
@@ -68,6 +40,7 @@ def test_orchestrator_persists_ai_confidence_and_source():
 
 # ---------- 2. Scheduler fetches watchlist candles in parallel --------------
 
+
 def test_scheduler_fetch_is_parallel(monkeypatch):
     """Fetching N symbols must be ~max(single_fetch_time), not N×single_fetch_time.
 
@@ -80,10 +53,15 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
     # Build 4 fake candles frame (long enough to exceed the 20-row guard).
     def _fake_df():
         closes = list(np.linspace(100, 110, 30))
-        return pd.DataFrame({
-            "open": closes, "high": closes, "low": closes,
-            "close": closes, "volume": [500] * 30,
-        })
+        return pd.DataFrame(
+            {
+                "open": closes,
+                "high": closes,
+                "low": closes,
+                "close": closes,
+                "volume": [500] * 30,
+            }
+        )
 
     class _FakeSession:
         def ensure_ready(self) -> None:
@@ -102,6 +80,7 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
 
     # Point watchlist at 4 symbols via settings override.
     from app.config import get_settings
+
     settings = get_settings()
     monkeypatch.setattr(settings, "watchlist", "A:NSE,B:NSE,C:NSE,D:NSE", raising=False)
     # Disable stagger so this test measures raw parallelism, not stagger delay.
@@ -123,11 +102,13 @@ def test_scheduler_fetch_is_parallel(monkeypatch):
 
             def force_close_all(self, prices, reason):
                 return []
+
         execution_agent = _Exec()
         risk = _StubRisk()
 
         def run(self, sym, df):
             return []
+
     monkeypatch.setattr(sched_mod, "get_orchestrator", lambda: _StubOrch())
 
     started = time.perf_counter()

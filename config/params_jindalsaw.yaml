@@ -1,0 +1,42 @@
+bollinger_squeeze:
+  best_params:
+    atr_mult: 2.999417164417524
+    squeeze_pct: 2.899874330308795
+  best_value: 89.1562
+  metric: sortino
+  strategy: bollinger_squeeze
+ema_breakout:
+  best_params:
+    atr_mult: 2.120016310157848
+  best_value: 686.7491
+  metric: sortino
+  strategy: ema_breakout
+macd_divergence:
+  best_params:
+    atr_mult: 2.7005376411765285
+    reward_ratio: 2.8402585455954927
+  best_value: 608.4198
+  metric: sortino
+  strategy: macd_divergence
+rsi_reversal:
+  best_params:
+    atr_mult: 2.5618343633252794
+    overbought: 78.40296831705021
+    oversold: 39.12412575947686
+  best_value: 1000.0
+  metric: sortino
+  strategy: rsi_reversal
+supertrend:
+  best_params:
+    atr_mult: 4.114611538394067
+    period: 19
+  best_value: 12.0175
+  metric: sortino
+  strategy: supertrend
+vwap_pullback:
+  best_params:
+    atr_mult: 1.8080577513177651
+    tolerance_pct: 0.299860477147494
+  best_value: 126593521.0261
+  metric: sortino
+  strategy: vwap_pullback

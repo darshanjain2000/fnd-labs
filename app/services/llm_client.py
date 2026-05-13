@@ -1,4 +1,5 @@
 """OpenRouter client with JSON response + daily spend cap."""
+
 from __future__ import annotations
 
 import json
@@ -9,6 +10,7 @@ import httpx
 
 from app.config import get_settings
 from app.core.logging import get_logger
+from app.exceptions.domain import SpendCapExceededException
 
 log = get_logger(__name__)
 
@@ -20,8 +22,9 @@ _COSTS = {
 }
 
 
-class SpendCapExceeded(RuntimeError):
-    pass
+# Back-compat alias — existing code imports SpendCapExceeded from this module.
+# New code should import SpendCapExceededException from app.exceptions directly.
+SpendCapExceeded = SpendCapExceededException
 
 
 class LLMClient:
@@ -41,7 +44,9 @@ class LLMClient:
         inp, out = _COSTS.get(self.s.openrouter_model, (5.0, 15.0))
         return (prompt_tokens * inp + completion_tokens * out) / 1_000_000
 
-    def chat_json(self, system: str, user: str, schema_hint: str = "") -> dict[str, Any]:
+    def chat_json(
+        self, system: str, user: str, schema_hint: str = ""
+    ) -> dict[str, Any]:
         """Synchronous call, returns parsed JSON dict or {} on failure/unavailable."""
         self._reset_if_new_day()
         if self._spend_usd >= self.s.openrouter_daily_usd_cap:
@@ -50,7 +55,9 @@ class LLMClient:
             log.warning("llm_no_api_key_degrade")
             return {}
 
-        sys_prompt = system + (("\n\nRespond ONLY with JSON. " + schema_hint) if schema_hint else "")
+        sys_prompt = system + (
+            ("\n\nRespond ONLY with JSON. " + schema_hint) if schema_hint else ""
+        )
         payload = {
             "model": self.s.openrouter_model,
             "messages": [
@@ -71,6 +78,10 @@ class LLMClient:
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as e:
+            # Broad catch: httpx raises several unrelated exception types
+            # (TimeoutException, ConnectError, HTTPStatusError, RemoteProtocolError).
+            # Any LLM failure degrades silently to the fallback rule — never crashes
+            # the pipeline.
             log.error("llm_call_failed", error=str(e))
             return {}
 

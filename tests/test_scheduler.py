@@ -1,11 +1,11 @@
 """Scheduler: unit tests that don't hit the network or Angel SDK."""
+
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
-from unittest.mock import MagicMock, call, patch
+from datetime import date, datetime, timedelta
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
-import pytest
 
 from app.services.scheduler import MarketScheduler
 
@@ -32,15 +32,36 @@ def test_within_market_hours_after_close():
     assert sched._within_market_hours(now) is False
 
 
+def test_within_market_hours_respects_config_window() -> None:
+    """Scheduler should honor configured market_open and market_close values."""
+    from app.config import Settings
+
+    sched = MarketScheduler()
+    now = datetime(2026, 4, 20, 9, 30, tzinfo=IST)
+    custom = Settings(market_open="10:00", market_close="11:00")
+    with patch("app.services.scheduler.get_settings", return_value=custom):
+        assert sched._within_market_hours(now) is False
+
+
 def test_past_square_off():
     sched = MarketScheduler()
     assert sched._past_square_off(datetime(2026, 4, 20, 15, 21, tzinfo=IST)) is True
     assert sched._past_square_off(datetime(2026, 4, 20, 15, 19, tzinfo=IST)) is False
 
 
+def test_describe_next_open_skips_holiday() -> None:
+    """Next-open descriptor should skip configured NSE holidays."""
+    sched = MarketScheduler()
+    # Jan 25, 2026 is Sunday; Jan 26 holiday, so next open is Jan 27.
+    now = datetime(2026, 1, 25, 10, 0, tzinfo=IST)
+    msg = sched._describe_next_open(now)
+    assert "Tue 27 Jan 09:15 IST" in msg
+
+
 def test_report_day_window_boundary():
     """IST day 00:00-23:59 converts to a non-empty UTC window."""
-    from app.api.runner import _ist_day_window
+    from app.routers.report_router import _ist_day_window
+
     start, end = _ist_day_window(date(2026, 4, 20))
     # 00:00 IST = 18:30 UTC previous day
     assert start.hour == 18 and start.minute == 30
@@ -64,9 +85,16 @@ def test_mark_to_market_closes_hit_trade():
     # Seed an open SELL trade: entry=100, SL=105
     with SessionLocal() as session:
         t = Trade(
-            symbol=sym, strategy="rsi_reversal", side="SELL", qty=10,
-            entry_price=100.0, stop_loss=105.0, target=95.0,
-            mode="paper", status="OPEN", broker_order_id=f"TEST-{sym}",
+            symbol=sym,
+            strategy="rsi_reversal",
+            side="SELL",
+            qty=10,
+            entry_price=100.0,
+            stop_loss=105.0,
+            target=95.0,
+            mode="paper",
+            status="OPEN",
+            broker_order_id=f"TEST-{sym}",
             entry_context={},
         )
         session.add(t)
@@ -87,6 +115,7 @@ def test_mark_to_market_closes_hit_trade():
 
 # ---- Heartbeat tests --------------------------------------------------------
 
+
 def _make_scheduler_with_status(started_at: datetime) -> MarketScheduler:
     """Return a MarketScheduler whose status reflects an already-started run."""
     sched = MarketScheduler()
@@ -98,7 +127,9 @@ def _make_scheduler_with_status(started_at: datetime) -> MarketScheduler:
     return sched
 
 
-def _mock_orchestrator(open_positions: int = 2, trades_today: int = 3, pnl: float = 500.0) -> MagicMock:
+def _mock_orchestrator(
+    open_positions: int = 2, trades_today: int = 3, pnl: float = 500.0
+) -> MagicMock:
     """Return a mock orchestrator whose risk.stats carry the given values."""
     orch = MagicMock()
     orch.risk.stats.open_positions = open_positions
@@ -114,7 +145,9 @@ def test_heartbeat_fires_on_first_call() -> None:
     now = datetime(2026, 4, 20, 9, 20, tzinfo=IST)  # 5 min after start
     sched = _make_scheduler_with_status(started)
 
-    with patch("app.services.scheduler.get_orchestrator", return_value=_mock_orchestrator()):
+    with patch(
+        "app.services.scheduler.get_orchestrator", return_value=_mock_orchestrator()
+    ):
         with patch("app.services.scheduler.log") as mock_log:
             sched._maybe_log_heartbeat(now)
             mock_log.info.assert_called_once_with(
@@ -137,7 +170,9 @@ def test_heartbeat_skips_within_interval() -> None:
 
     sched = _make_scheduler_with_status(started)
 
-    with patch("app.services.scheduler.get_orchestrator", return_value=_mock_orchestrator()):
+    with patch(
+        "app.services.scheduler.get_orchestrator", return_value=_mock_orchestrator()
+    ):
         with patch("app.services.scheduler.log") as mock_log:
             sched._maybe_log_heartbeat(first)
             sched._maybe_log_heartbeat(second)
@@ -153,7 +188,9 @@ def test_heartbeat_fires_again_after_interval_elapsed() -> None:
 
     sched = _make_scheduler_with_status(started)
 
-    with patch("app.services.scheduler.get_orchestrator", return_value=_mock_orchestrator()):
+    with patch(
+        "app.services.scheduler.get_orchestrator", return_value=_mock_orchestrator()
+    ):
         with patch("app.services.scheduler.log") as mock_log:
             sched._maybe_log_heartbeat(first)
             sched._maybe_log_heartbeat(second)
