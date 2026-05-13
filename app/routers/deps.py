@@ -4,6 +4,7 @@ Each ``get_*`` function is an ``lru_cache``'d builder. Call
 :func:`reset_cached_singletons` to invalidate every cache after a config
 reload so the next request reads fresh ``Settings``.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache

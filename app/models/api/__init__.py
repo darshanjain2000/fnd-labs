@@ -4,6 +4,7 @@
 handler. Domain-specific response DTOs (``TradeOut``, ``SignalOut``,
 ``ReportOut``, ...) live alongside the routers that consume them.
 """
+
 from __future__ import annotations
 
 from app.models.api.admin import (

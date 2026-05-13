@@ -1,4 +1,5 @@
 """Audit-log repository — all DB access for the ``audit_log`` table."""
+
 from __future__ import annotations
 
 from sqlalchemy import desc, func
@@ -18,7 +19,9 @@ class AuditLogDAL(BaseRepository):
     def list_recent(self, limit: int = 50) -> list[AuditLog]:
         """Return the most recent audit-log events, newest first."""
         with self._session() as session:
-            rows = session.query(AuditLog).order_by(desc(AuditLog.at)).limit(limit).all()
+            rows = (
+                session.query(AuditLog).order_by(desc(AuditLog.at)).limit(limit).all()
+            )
             for r in rows:
                 session.expunge(r)
             return rows

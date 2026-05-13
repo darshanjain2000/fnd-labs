@@ -1,4 +1,5 @@
 """Unit tests for ``TradeDAL``."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -66,11 +67,13 @@ def test_find_by_id_returns_none_when_missing(db_factory) -> None:
 def test_find_open_filters_on_status(db_factory) -> None:
     factory = db_factory()
     with factory() as s:
-        s.add_all([
-            _make_trade(status="OPEN"),
-            _make_trade(status="CLOSED"),
-            _make_trade(status="OPEN"),
-        ])
+        s.add_all(
+            [
+                _make_trade(status="OPEN"),
+                _make_trade(status="CLOSED"),
+                _make_trade(status="OPEN"),
+            ]
+        )
         s.commit()
 
     rows = TradeDAL(session_factory=factory).find_open()
@@ -81,12 +84,14 @@ def test_find_open_filters_on_status(db_factory) -> None:
 def test_list_open_symbols_returns_distinct_symbols(db_factory) -> None:
     factory = db_factory()
     with factory() as s:
-        s.add_all([
-            _make_trade(symbol="AAA", status="OPEN"),
-            _make_trade(symbol="BBB", status="OPEN"),
-            _make_trade(symbol="AAA", status="OPEN"),  # duplicate
-            _make_trade(symbol="CCC", status="CLOSED"),  # filtered out
-        ])
+        s.add_all(
+            [
+                _make_trade(symbol="AAA", status="OPEN"),
+                _make_trade(symbol="BBB", status="OPEN"),
+                _make_trade(symbol="AAA", status="OPEN"),  # duplicate
+                _make_trade(symbol="CCC", status="CLOSED"),  # filtered out
+            ]
+        )
         s.commit()
 
     syms = set(TradeDAL(session_factory=factory).list_open_symbols())
@@ -110,12 +115,22 @@ def test_find_closed_by_symbol_orders_newest_first(db_factory) -> None:
     factory = db_factory()
     base = datetime(2026, 4, 1)
     with factory() as s:
-        s.add_all([
-            _make_trade(symbol="X", status="CLOSED", closed_at=base + timedelta(days=1)),
-            _make_trade(symbol="X", status="CLOSED", closed_at=base + timedelta(days=3)),
-            _make_trade(symbol="X", status="CLOSED", closed_at=base + timedelta(days=2)),
-            _make_trade(symbol="Y", status="CLOSED", closed_at=base + timedelta(days=5)),
-        ])
+        s.add_all(
+            [
+                _make_trade(
+                    symbol="X", status="CLOSED", closed_at=base + timedelta(days=1)
+                ),
+                _make_trade(
+                    symbol="X", status="CLOSED", closed_at=base + timedelta(days=3)
+                ),
+                _make_trade(
+                    symbol="X", status="CLOSED", closed_at=base + timedelta(days=2)
+                ),
+                _make_trade(
+                    symbol="Y", status="CLOSED", closed_at=base + timedelta(days=5)
+                ),
+            ]
+        )
         s.commit()
 
     rows = TradeDAL(session_factory=factory).find_closed_by_symbol("X", limit=10)
@@ -126,11 +141,19 @@ def test_find_closed_by_symbol_orders_newest_first(db_factory) -> None:
 def test_find_closed_by_symbol_applies_filters(db_factory) -> None:
     factory = db_factory()
     with factory() as s:
-        s.add_all([
-            _make_trade(symbol="Z", status="CLOSED", side="BUY", strategy="rsi_reversal"),
-            _make_trade(symbol="Z", status="CLOSED", side="SELL", strategy="rsi_reversal"),
-            _make_trade(symbol="Z", status="CLOSED", side="BUY", strategy="ema_breakout"),
-        ])
+        s.add_all(
+            [
+                _make_trade(
+                    symbol="Z", status="CLOSED", side="BUY", strategy="rsi_reversal"
+                ),
+                _make_trade(
+                    symbol="Z", status="CLOSED", side="SELL", strategy="rsi_reversal"
+                ),
+                _make_trade(
+                    symbol="Z", status="CLOSED", side="BUY", strategy="ema_breakout"
+                ),
+            ]
+        )
         s.commit()
 
     dal = TradeDAL(session_factory=factory)

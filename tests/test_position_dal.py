@@ -1,4 +1,5 @@
 """Unit tests for ``PositionDAL``."""
+
 from __future__ import annotations
 
 from app.dal.position_dal import PositionDAL

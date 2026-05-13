@@ -5,6 +5,7 @@ to the legacy ``Literal`` alias in ``app.strategies.base`` and
 ``app.engine.regime_detector``, so existing call sites that compare to
 raw strings continue to work without change.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

@@ -1,4 +1,5 @@
 """Controller for broker execution, close, and mark-to-market."""
+
 from __future__ import annotations
 
 from app.models.trade import Trade
@@ -25,7 +26,9 @@ class ExecutionController:
         """
         if service is None:
             if broker is None:
-                raise ValueError("ExecutionController requires either broker or service")
+                raise ValueError(
+                    "ExecutionController requires either broker or service"
+                )
             service = ExecutionService(broker)
         self._service = service
 

@@ -1,4 +1,5 @@
 """Pydantic DTOs for the ``/analyze`` router."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -32,7 +33,9 @@ class LiveAnalyzeRequest(BaseModel):
     symbol: str = Field(..., examples=["NIFTY25APR22500CE"])
     exchange: str = Field("NFO", examples=["NFO", "NSE", "BSE"])
     interval: str = Field("5m", examples=["1m", "3m", "5m", "15m", "30m", "1h"])
-    from_dt: datetime | None = Field(None, description="Start datetime (default: 80 bars back)")
+    from_dt: datetime | None = Field(
+        None, description="Start datetime (default: 80 bars back)"
+    )
     to_dt: datetime | None = Field(None, description="End datetime (default: now)")
     is_expiry_day: bool = False
 

@@ -1,4 +1,5 @@
 """Tests for the backtester and Optuna optimiser (Phase 3)."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ from app.strategies.rsi_reversal import RSIReversal
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _df(n: int = 300, seed: int = 42) -> pd.DataFrame:
     """Synthetic trending OHLCV DataFrame with indicators."""
     rng = np.random.default_rng(seed)
@@ -48,6 +50,7 @@ def _df(n: int = 300, seed: int = 42) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # run_backtest
 # ---------------------------------------------------------------------------
+
 
 def test_run_backtest_returns_one_result_per_strategy() -> None:
     df = _df()
@@ -96,11 +99,15 @@ def test_run_backtest_stop_loss_respected() -> None:
 # trailing ATR stop
 # ---------------------------------------------------------------------------
 
+
 def test_trailing_stop_produces_trailing_exits() -> None:
     """With trailing_atr_mult > 0, some trades should exit via 'trailing'."""
     df = _df(n=500, seed=99)
     results = run_backtest(
-        df, [RSIReversal()], capital=50_000.0, trailing_atr_mult=1.5,
+        df,
+        [RSIReversal()],
+        capital=50_000.0,
+        trailing_atr_mult=1.5,
     )
     r = results[0]
     exit_reasons = {t.exit_reason for t in r.trades}
@@ -120,6 +127,7 @@ def test_trailing_stop_disabled_by_default() -> None:
 # walk_forward
 # ---------------------------------------------------------------------------
 
+
 def test_walk_forward_runs_without_error() -> None:
     df = _df(n=600)
     results = walk_forward(df, [RSIReversal()], train_bars=200, test_bars=100)
@@ -129,7 +137,9 @@ def test_walk_forward_runs_without_error() -> None:
 
 def test_walk_forward_produces_oos_trades() -> None:
     df = _df(n=800, seed=7)
-    results = walk_forward(df, [EMABreakout()], train_bars=300, test_bars=150, capital=25_000.0)
+    results = walk_forward(
+        df, [EMABreakout()], train_bars=300, test_bars=150, capital=25_000.0
+    )
     r = results[0]
     # With 800 bars and 150 step, expect at least one OOS window
     assert r.from_date is not None
@@ -140,10 +150,18 @@ def test_walk_forward_produces_oos_trades() -> None:
 # Ensemble conviction filter (_pick_ensemble_signal)
 # ---------------------------------------------------------------------------
 
+
 def test_pick_ensemble_signal_returns_none_on_no_agreement() -> None:
     """Single signal should not pass when min_agreement=2."""
     signals = [
-        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.8),
+        Signal(
+            symbol="X",
+            strategy="rsi",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.8,
+        ),
     ]
     best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
     assert best is None
@@ -153,8 +171,22 @@ def test_pick_ensemble_signal_returns_none_on_no_agreement() -> None:
 def test_pick_ensemble_signal_returns_best_on_agreement() -> None:
     """Two BUY signals should pass when min_agreement=2, picking highest confidence."""
     signals = [
-        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.6),
-        Signal(symbol="X", strategy="ema", side="BUY", entry=100, stop_loss=98, confidence=0.9),
+        Signal(
+            symbol="X",
+            strategy="rsi",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.6,
+        ),
+        Signal(
+            symbol="X",
+            strategy="ema",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.9,
+        ),
     ]
     best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
     assert best is not None
@@ -166,8 +198,22 @@ def test_pick_ensemble_signal_returns_best_on_agreement() -> None:
 def test_pick_ensemble_signal_drops_low_confidence() -> None:
     """Signals below min_confidence should be dropped before counting."""
     signals = [
-        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.3),
-        Signal(symbol="X", strategy="ema", side="BUY", entry=100, stop_loss=98, confidence=0.8),
+        Signal(
+            symbol="X",
+            strategy="rsi",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.3,
+        ),
+        Signal(
+            symbol="X",
+            strategy="ema",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.8,
+        ),
     ]
     # Only 1 strong signal left — not enough for agreement=2
     best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
@@ -178,9 +224,30 @@ def test_pick_ensemble_signal_drops_low_confidence() -> None:
 def test_pick_ensemble_signal_picks_majority_side() -> None:
     """When 2 BUY and 1 SELL, BUY side wins."""
     signals = [
-        Signal(symbol="X", strategy="rsi", side="BUY", entry=100, stop_loss=98, confidence=0.7),
-        Signal(symbol="X", strategy="ema", side="BUY", entry=100, stop_loss=98, confidence=0.6),
-        Signal(symbol="X", strategy="macd", side="SELL", entry=100, stop_loss=102, confidence=0.9),
+        Signal(
+            symbol="X",
+            strategy="rsi",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.7,
+        ),
+        Signal(
+            symbol="X",
+            strategy="ema",
+            side="BUY",
+            entry=100,
+            stop_loss=98,
+            confidence=0.6,
+        ),
+        Signal(
+            symbol="X",
+            strategy="macd",
+            side="SELL",
+            entry=100,
+            stop_loss=102,
+            confidence=0.9,
+        ),
     ]
     best, contribs = _pick_ensemble_signal(signals, min_agreement=2, min_confidence=0.5)
     assert best is not None
@@ -200,12 +267,15 @@ def test_pick_ensemble_signal_empty_returns_none() -> None:
 # run_ensemble_backtest
 # ---------------------------------------------------------------------------
 
+
 def test_ensemble_backtest_returns_single_result() -> None:
     """Ensemble backtest should return a single BacktestResult."""
     df = _df(n=300)
     result = run_ensemble_backtest(
-        df, [RSIReversal(), EMABreakout()],
-        symbol="TEST", min_agreement=2,
+        df,
+        [RSIReversal(), EMABreakout()],
+        symbol="TEST",
+        min_agreement=2,
     )
     assert isinstance(result, BacktestResult)
     assert result.strategy == "ensemble_2"
@@ -221,7 +291,10 @@ def test_ensemble_backtest_fewer_trades_than_individual() -> None:
     max_individual_trades = max(len(r.trades) for r in individual)
 
     ensemble = run_ensemble_backtest(
-        df, strategies, symbol="TEST", min_agreement=2,
+        df,
+        strategies,
+        symbol="TEST",
+        min_agreement=2,
     )
     assert len(ensemble.trades) <= max_individual_trades
 
@@ -230,8 +303,10 @@ def test_ensemble_backtest_with_agreement_1_matches_relaxed() -> None:
     """With min_agreement=1, ensemble should still produce valid trades."""
     df = _df(n=300)
     result = run_ensemble_backtest(
-        df, [RSIReversal()],
-        symbol="TEST", min_agreement=1,
+        df,
+        [RSIReversal()],
+        symbol="TEST",
+        min_agreement=1,
     )
     assert isinstance(result, BacktestResult)
     assert result.strategy == "ensemble_1"
@@ -240,6 +315,7 @@ def test_ensemble_backtest_with_agreement_1_matches_relaxed() -> None:
 # ---------------------------------------------------------------------------
 # compute_kelly_fraction (utility function)
 # ---------------------------------------------------------------------------
+
 
 def test_kelly_returns_1_on_insufficient_data() -> None:
     assert compute_kelly_fraction([]) == 1.0
@@ -274,7 +350,9 @@ def test_kelly_applies_to_risk_engine() -> None:
         kelly_sizing_enabled=True,
     )
     engine = RiskEngine(settings=s)
-    sig = Signal(symbol="X", strategy="t", side="BUY", entry=100.0, stop_loss=98.0, target=104.0)
+    sig = Signal(
+        symbol="X", strategy="t", side="BUY", entry=100.0, stop_loss=98.0, target=104.0
+    )
 
     # Baseline (kelly_fraction=1.0)
     base = engine.evaluate(sig, lot_size=1)
@@ -292,6 +370,7 @@ def test_kelly_applies_to_risk_engine() -> None:
 # ---------------------------------------------------------------------------
 # SignalAgent regime filtering
 # ---------------------------------------------------------------------------
+
 
 def test_signal_agent_regime_filter_blocks_mismatched_strategy() -> None:
     """SupertrendStrategy (trend-only) should be blocked in 'range' regime."""

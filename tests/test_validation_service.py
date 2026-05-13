@@ -1,4 +1,5 @@
 """Unit tests for :class:`app.services.validation_service.ValidationService`."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -13,7 +14,9 @@ from app.strategies.base import Signal
 class _FakeLLM:
     """Minimal :class:`LLMClient` replacement for deterministic tests."""
 
-    def __init__(self, *, result: dict | None = None, raises: Exception | None = None) -> None:
+    def __init__(
+        self, *, result: dict | None = None, raises: Exception | None = None
+    ) -> None:
         self._result = result
         self._raises = raises
         self.calls: list[tuple[str, str, str]] = []
@@ -39,13 +42,23 @@ def _signal(confidence: float = 0.7) -> Signal:
 
 @pytest.fixture
 def _disable_llm(make_settings):
-    with patch("app.services.validation_service.get_settings", return_value=make_settings(openrouter_enabled=False, ai_fallback_approve_threshold=0.6)):
+    with patch(
+        "app.services.validation_service.get_settings",
+        return_value=make_settings(
+            openrouter_enabled=False, ai_fallback_approve_threshold=0.6
+        ),
+    ):
         yield
 
 
 @pytest.fixture
 def _enable_llm(make_settings):
-    with patch("app.services.validation_service.get_settings", return_value=make_settings(openrouter_enabled=True, ai_fallback_approve_threshold=0.6)):
+    with patch(
+        "app.services.validation_service.get_settings",
+        return_value=make_settings(
+            openrouter_enabled=True, ai_fallback_approve_threshold=0.6
+        ),
+    ):
         yield
 
 

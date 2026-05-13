@@ -1,4 +1,5 @@
 """Tests for the ``ApiResponse[T]`` envelope and FastAPI exception handlers."""
+
 from __future__ import annotations
 
 import pytest
@@ -80,7 +81,9 @@ def handler_app() -> FastAPI:
     async def _unhandled(_req: Request, exc: Exception) -> JSONResponse:  # noqa: ARG001
         return JSONResponse(
             status_code=500,
-            content=ApiResponse(statusCode=500, result=None, error="Internal server error").model_dump(),
+            content=ApiResponse(
+                statusCode=500, result=None, error="Internal server error"
+            ).model_dump(),
         )
 
     @app.get("/missing-trade")

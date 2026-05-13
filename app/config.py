@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     Change a value in .env and restart uvicorn — no code edits needed.
     """
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", case_sensitive=False
+    )
 
     # ---- Core mode ---------------------------------------------------
     mode: Literal["paper", "live"] = "paper"
@@ -210,4 +212,3 @@ def reload_settings() -> Settings:
     """Force a fresh read of .env (useful in tests / admin endpoints)."""
     get_settings.cache_clear()
     return get_settings()
-

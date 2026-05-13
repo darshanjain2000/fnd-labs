@@ -15,6 +15,7 @@ Phase 3 addition:
 
 AI cannot override rejection. Approval still passes through this gate.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -53,7 +54,9 @@ class DailyStats:
     last_reset: date = date.today()
 
 
-def position_size(capital: float, risk_pct: float, entry: float, stop: float, lot_size: int = 1) -> int:
+def position_size(
+    capital: float, risk_pct: float, entry: float, stop: float, lot_size: int = 1
+) -> int:
     """Compute risk-based position size rounded DOWN to a lot-size multiple.
 
     Args:
@@ -157,7 +160,9 @@ class RiskEngine:
         self.stats.open_positions = max(0, self.stats.open_positions - 1)
         self.stats.realized_pnl_today += pnl
 
-    def evaluate(self, signal: Signal, lot_size: int = 1, is_expiry_day: bool = False) -> RiskDecision:
+    def evaluate(
+        self, signal: Signal, lot_size: int = 1, is_expiry_day: bool = False
+    ) -> RiskDecision:
         """Run all risk gates and return a RiskDecision.
 
         Args:
@@ -189,7 +194,9 @@ class RiskEngine:
             return RiskDecision(False, 0, "expiry_day_last_hours_block")
 
         effective_risk_pct = s.max_risk_per_trade_pct * self._kelly_fraction
-        qty = position_size(s.capital_inr, effective_risk_pct, signal.entry, signal.stop_loss, lot_size)
+        qty = position_size(
+            s.capital_inr, effective_risk_pct, signal.entry, signal.stop_loss, lot_size
+        )
         if qty < 1:
             return RiskDecision(False, 0, "qty_below_lot_size")
 

@@ -4,6 +4,7 @@ Per AGENTS.md §5, controllers coordinate services and DAL reads, shape
 results for the transport layer, and map domain exceptions into API
 responses. They never hold business logic themselves.
 """
+
 from __future__ import annotations
 
 from app.controllers.execution_controller import ExecutionController

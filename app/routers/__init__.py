@@ -9,4 +9,5 @@ Every endpoint returns an ``ApiResponse[T]`` envelope so clients can rely
 on a uniform shape — including in the error path (global handler in
 ``app.main``).
 """
+
 from __future__ import annotations

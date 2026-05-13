@@ -7,6 +7,7 @@ Indicators computed: rsi, ema20, ema50, vwap, atr14, macd, macd_signal, macd_his
 bb_upper, bb_mid, bb_lower, bb_width, stoch_k, stoch_d, obv, adx,
 supertrend, supertrend_dir.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -55,6 +56,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Pure pandas/numpy fallback (no pandas_ta dependency)
 # ---------------------------------------------------------------------------
+
 
 def _compute_fallback(out: pd.DataFrame) -> None:
     """Compute all indicators in-place using only numpy and pandas."""
@@ -106,7 +108,9 @@ def _compute_fallback(out: pd.DataFrame) -> None:
     out["stoch_d"] = out["stoch_k"].rolling(3).mean()
 
     # OBV
-    direction = out["close"].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+    direction = (
+        out["close"].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+    )
     out["obv"] = (direction * out["volume"]).cumsum()
 
     # ADX (14)
@@ -143,13 +147,19 @@ def _adx_fallback(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
     alpha = 1.0 / period
     atr_s = tr.ewm(alpha=alpha, adjust=False).mean()
-    plus_di = 100 * plus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_s.replace(0, 1e-9)
-    minus_di = 100 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_s.replace(0, 1e-9)
+    plus_di = (
+        100 * plus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_s.replace(0, 1e-9)
+    )
+    minus_di = (
+        100 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_s.replace(0, 1e-9)
+    )
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-9)
     return dx.ewm(alpha=alpha, adjust=False).mean()
 
 
-def _supertrend_fallback(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> None:
+def _supertrend_fallback(
+    df: pd.DataFrame, period: int = 10, multiplier: float = 3.0
+) -> None:
     """Compute Supertrend and add *supertrend* / *supertrend_dir* columns in-place.
 
     Args:
@@ -164,12 +174,14 @@ def _supertrend_fallback(df: pd.DataFrame, period: int = 10, multiplier: float =
 
     # True range
     prev_close = np.concatenate([[np.nan], close[:-1]])
-    tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+    tr = np.maximum(
+        high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close))
+    )
 
     # ATR via rolling simple mean (sequential to match standard definition)
     atr = np.full(n, np.nan)
     for i in range(period - 1, n):
-        atr[i] = np.nanmean(tr[max(0, i - period + 1): i + 1])
+        atr[i] = np.nanmean(tr[max(0, i - period + 1) : i + 1])
 
     hl2 = (high + low) / 2.0
     basic_upper = hl2 + multiplier * atr
@@ -182,8 +194,12 @@ def _supertrend_fallback(df: pd.DataFrame, period: int = 10, multiplier: float =
 
     for i in range(period, n):
         pu, pl = final_upper[i - 1], final_lower[i - 1]
-        final_upper[i] = basic_upper[i] if (basic_upper[i] < pu or close[i - 1] > pu) else pu
-        final_lower[i] = basic_lower[i] if (basic_lower[i] > pl or close[i - 1] < pl) else pl
+        final_upper[i] = (
+            basic_upper[i] if (basic_upper[i] < pu or close[i - 1] > pu) else pu
+        )
+        final_lower[i] = (
+            basic_lower[i] if (basic_lower[i] > pl or close[i - 1] < pl) else pl
+        )
 
         prev_dir = direction[i - 1]
         if prev_dir == -1.0 and close[i] > final_upper[i]:
@@ -203,13 +219,18 @@ def _supertrend_fallback(df: pd.DataFrame, period: int = 10, multiplier: float =
 # pandas_ta-backed computation
 # ---------------------------------------------------------------------------
 
+
 def _compute_pandas_ta(out: pd.DataFrame) -> None:
     """Use pandas_ta for indicator computation (faster, more precise)."""
     out["rsi"] = ta.rsi(out["close"], length=14)
     out["ema20"] = ta.ema(out["close"], length=20)
     out["ema50"] = ta.ema(out["close"], length=50)
-    out["vwap"] = ta.vwap(high=out["high"], low=out["low"], close=out["close"], volume=out["volume"])
-    out["atr14"] = ta.atr(high=out["high"], low=out["low"], close=out["close"], length=14)
+    out["vwap"] = ta.vwap(
+        high=out["high"], low=out["low"], close=out["close"], volume=out["volume"]
+    )
+    out["atr14"] = ta.atr(
+        high=out["high"], low=out["low"], close=out["close"], length=14
+    )
 
     macd_df = ta.macd(out["close"], fast=12, slow=26, signal=9)
     if macd_df is not None and not macd_df.empty:
@@ -226,7 +247,9 @@ def _compute_pandas_ta(out: pd.DataFrame) -> None:
         out["bb_upper"] = bb_df.iloc[:, 2]
         out["bb_width"] = bb_df.iloc[:, 3]
     else:
-        out["bb_upper"] = out["bb_mid"] = out["bb_lower"] = out["bb_width"] = float("nan")
+        out["bb_upper"] = out["bb_mid"] = out["bb_lower"] = out["bb_width"] = float(
+            "nan"
+        )
 
     stoch_df = ta.stoch(out["high"], out["low"], out["close"], k=14, d=3)
     if stoch_df is not None and not stoch_df.empty:
@@ -239,7 +262,9 @@ def _compute_pandas_ta(out: pd.DataFrame) -> None:
     out["obv"] = obv if obv is not None else float("nan")
 
     adx_df = ta.adx(out["high"], out["low"], out["close"], length=14)
-    out["adx"] = adx_df.iloc[:, 0] if (adx_df is not None and not adx_df.empty) else float("nan")
+    out["adx"] = (
+        adx_df.iloc[:, 0] if (adx_df is not None and not adx_df.empty) else float("nan")
+    )
 
     # Supertrend: use pure-numpy fallback for cross-version compatibility
     _supertrend_fallback(out, period=10, multiplier=3.0)
@@ -248,6 +273,7 @@ def _compute_pandas_ta(out: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 # Higher-timeframe resampling
 # ---------------------------------------------------------------------------
+
 
 def resample_to_htf(df: pd.DataFrame, target_interval: str = "15min") -> pd.DataFrame:
     """Resample OHLCV candles to a higher timeframe and compute indicators.
@@ -266,6 +292,12 @@ def resample_to_htf(df: pd.DataFrame, target_interval: str = "15min") -> pd.Data
         raise ValueError("resample_to_htf requires a DatetimeIndex on df")
     work = df.copy()
     work.columns = [c.lower() for c in work.columns]
-    agg_map = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    agg_map = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }
     resampled = work.resample(target_interval).agg(agg_map).dropna(subset=["close"])
     return compute_indicators(resampled)

@@ -1,4 +1,5 @@
 """Tests for app.core.optimized_params — per-symbol parameter loader."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -51,7 +52,11 @@ def test_load_params_parses_best_params_dict(tmp_path: Path, monkeypatch) -> Non
 
     result = load_params_for_symbol("NIFTY")
 
-    assert result["rsi_reversal"] == {"atr_mult": 1.8, "oversold": 28.0, "overbought": 72.0}
+    assert result["rsi_reversal"] == {
+        "atr_mult": 1.8,
+        "oversold": 28.0,
+        "overbought": 72.0,
+    }
     assert result["ema_breakout"] == {"atr_mult": 1.2}
 
 

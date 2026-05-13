@@ -1,8 +1,12 @@
 """View & mutate runtime config. All toggles live in :class:`Settings`."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from pathlib import Path
+from typing import Any
+import yaml
 
 from app.config import get_settings, reload_settings
 from app.exceptions.domain import InvalidRequestException
@@ -14,17 +18,31 @@ router = APIRouter(prefix="/config", tags=["config"])
 
 
 _EDITABLE_FIELDS = {
-    "mode", "broker", "paper_trade",
-    "enabled_strategies", "default_lot_size",
-    "openrouter_enabled", "openrouter_model", "agent_preset",
-    "ai_fallback_approve_threshold", "openrouter_daily_usd_cap",
-    "memory_source", "memory_k",
+    "mode",
+    "broker",
+    "paper_trade",
+    "enabled_strategies",
+    "default_lot_size",
+    "openrouter_enabled",
+    "openrouter_model",
+    "agent_preset",
+    "ai_fallback_approve_threshold",
+    "openrouter_daily_usd_cap",
+    "memory_source",
+    "memory_k",
     "rag_enabled",
-    "capital_inr", "max_risk_per_trade_pct", "max_daily_loss_pct",
-    "max_open_positions", "max_trades_per_day",
-    "kill_switch", "block_expiry_last_hours",
-    "regime_filter_enabled", "require_htf_agreement", "kelly_sizing_enabled",
-    "min_strategy_agreement", "min_signal_confidence",
+    "capital_inr",
+    "max_risk_per_trade_pct",
+    "max_daily_loss_pct",
+    "max_open_positions",
+    "max_trades_per_day",
+    "kill_switch",
+    "block_expiry_last_hours",
+    "regime_filter_enabled",
+    "require_htf_agreement",
+    "kelly_sizing_enabled",
+    "min_strategy_agreement",
+    "min_signal_confidence",
     "signal_memory_ticks",
 }
 
@@ -110,4 +128,51 @@ def reload_from_env() -> ApiResponse[ConfigReloadOut]:
     reset_angel_session()
     return ApiResponse[ConfigReloadOut].ok(
         ConfigReloadOut(reloaded=True, config=_safe_view())
+    )
+
+
+_PARAMS_DIR = Path("config")
+
+
+@router.get("/params/{symbol}", response_model=ApiResponse[dict])
+def get_params(symbol: str) -> ApiResponse[dict]:
+    """Return the Optuna-optimized strategy params for a symbol.
+
+    Args:
+        symbol: Trading symbol (case-insensitive).
+
+    Returns:
+        ApiResponse with ``symbol`` and ``params`` dict (empty if not optimized yet).
+    """
+    path = _PARAMS_DIR / f"params_{symbol.lower()}.yaml"
+    if not path.exists():
+        return ApiResponse[dict].ok({"symbol": symbol.upper(), "params": {}})
+    data: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+    return ApiResponse[dict].ok({"symbol": symbol.upper(), "params": data})
+
+
+@router.post("/params/{symbol}", response_model=ApiResponse[dict])
+def save_params(symbol: str, body: dict) -> ApiResponse[dict]:
+    """Write strategy params for a symbol to its YAML file.
+
+    Merges the supplied dict into the existing file (so partial updates work).
+    Only keys present in the request body are updated; all other strategies
+    in the file are preserved.
+
+    Args:
+        symbol: Trading symbol (case-insensitive).
+        body: Dict mapping strategy name -> param dict (same shape as the YAML file).
+
+    Returns:
+        ApiResponse confirming the write with the full updated params.
+    """
+    _PARAMS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _PARAMS_DIR / f"params_{symbol.lower()}.yaml"
+    existing: dict[str, Any] = {}
+    if path.exists():
+        existing = yaml.safe_load(path.read_text()) or {}
+    existing.update(body)
+    path.write_text(yaml.dump(existing, default_flow_style=False))
+    return ApiResponse[dict].ok(
+        {"symbol": symbol.upper(), "params": existing, "saved": True}
     )

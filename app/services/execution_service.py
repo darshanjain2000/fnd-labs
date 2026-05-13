@@ -4,6 +4,7 @@ Places entry + SL orders, persists Trade + AuditLog through ``TradeDAL``
 atomic methods, and owns mark-to-market and end-of-day square-off logic
 for open positions.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -260,7 +261,12 @@ class ExecutionService:
             if updated is None:
                 continue
             closed.append(updated)
-            log.info("trade_force_closed", trade_id=updated.id, pnl=updated.pnl, reason=reason)
+            log.info(
+                "trade_force_closed",
+                trade_id=updated.id,
+                pnl=updated.pnl,
+                reason=reason,
+            )
         return closed
 
     @staticmethod

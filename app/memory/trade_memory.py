@@ -7,6 +7,7 @@ Feeds the LLM validator with structured facts from past trades:
 For structured intraday data with a modest trade count, this is cheaper,
 deterministic, and more informative than embedding-based retrieval.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -75,7 +76,9 @@ class TradeMemory:
         losses = total - wins
         win_rate = (wins / total) if total else 0.0
         avg_pnl = (float(total_pnl) / total) if total else 0.0
-        return TradeStats(total=total, wins=wins, losses=losses, win_rate=win_rate, avg_pnl=avg_pnl)
+        return TradeStats(
+            total=total, wins=wins, losses=losses, win_rate=win_rate, avg_pnl=avg_pnl
+        )
 
     # ---- LLM-facing format ------------------------------------------------
     def format_context(

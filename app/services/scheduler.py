@@ -11,27 +11,24 @@ Responsibilities
 
 No threads — uses asyncio background task (FastAPI-friendly).
 """
+
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.routers.deps import get_orchestrator, set_mock_quote
 from app.config import get_settings
 from app.core.logging import get_logger
+from app.core.market_calendar import is_market_open, next_market_open, parse_hhmm
 from app.services.angel_session import get_angel_session
 from app.services.market_data import compute_indicators
 
 log = get_logger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-
-
-def _parse_hhmm(s: str) -> dtime:
-    h, m = s.split(":")
-    return dtime(int(h), int(m))
 
 
 @dataclass
@@ -73,6 +70,7 @@ class MarketScheduler:
         return True
 
     async def stop(self) -> None:
+
         self._stop_event.set()
         if self._task:
             try:
@@ -85,26 +83,20 @@ class MarketScheduler:
     # ---- internals -------------------------------------------------------
     def _within_market_hours(self, now: datetime) -> bool:
         s = get_settings()
-        if now.weekday() >= 5:  # Sat / Sun
-            return False
-        open_t = _parse_hhmm(s.market_open)
-        close_t = _parse_hhmm(s.market_close)
-        return open_t <= now.time() <= close_t
+        return is_market_open(
+            now,
+            market_open=parse_hhmm(s.market_open),
+            market_close=parse_hhmm(s.market_close),
+        )
 
     def _past_square_off(self, now: datetime) -> bool:
         s = get_settings()
-        return now.time() >= _parse_hhmm(s.square_off_time)
+        return now.time() >= parse_hhmm(s.square_off_time)
 
     def _describe_next_open(self, now: datetime) -> str:
         """Return a human-readable string like 'Mon 20 Apr 09:15 IST (in 15h 42m)'."""
-        s = get_settings()
-        open_t = _parse_hhmm(s.market_open)
-        candidate = now.replace(hour=open_t.hour, minute=open_t.minute, second=0, microsecond=0)
-        # If today's open already passed OR today is weekend, roll forward
-        if candidate <= now:
-            candidate = candidate + timedelta(days=1)
-        while candidate.weekday() >= 5:  # Sat / Sun
-            candidate = candidate + timedelta(days=1)
+        market_open = parse_hhmm(get_settings().market_open)
+        candidate = next_market_open(now, market_open=market_open)
         delta = candidate - now
         hrs = int(delta.total_seconds() // 3600)
         mins = int((delta.total_seconds() % 3600) // 60)
@@ -147,6 +139,33 @@ class MarketScheduler:
             signals_seen=self.status.signals_seen,
             uptime=f"{hrs}h {mins}m",
         )
+
+    def _emit_eod_summary(
+        self, closed_in_square_off: int, now: datetime
+    ) -> dict[str, object]:
+        """Build and log a one-line EOD summary snapshot.
+
+        Args:
+            closed_in_square_off: Count of positions force-closed at EOD.
+            now: Current IST timestamp.
+
+        Returns:
+            A JSON-safe summary payload.
+        """
+        risk_stats = get_orchestrator().risk.stats
+        payload: dict[str, object] = {
+            "date_ist": now.strftime("%Y-%m-%d"),
+            "ticks": self.status.ticks,
+            "signals_seen": self.status.signals_seen,
+            "trades_opened": self.status.trades_opened,
+            "trades_auto_closed": self.status.trades_auto_closed,
+            "closed_in_square_off": closed_in_square_off,
+            "realized_pnl": round(float(risk_stats.realized_pnl_today), 2),
+            "open_positions": int(risk_stats.open_positions),
+            "trades_today": int(risk_stats.trades_today),
+        }
+        log.info("scheduler_eod_summary", **payload)
+        return payload
 
     async def _loop(self) -> None:
         log.info("scheduler_loop_entry")
@@ -262,19 +281,50 @@ class MarketScheduler:
 
         # 1. Mark-to-market: close any trades that hit SL/target
         orch = get_orchestrator()
-        closed = orch.execution_agent.mark_to_market(latest_prices, reason_tag="live_tick")
+        closed = orch.execution_agent.mark_to_market(
+            latest_prices, reason_tag="live_tick"
+        )
         self.status.trades_auto_closed += len(closed)
+        # Broadcast mark-to-market closes
+        from app.services.ws_broadcaster import get_broadcaster
+
+        broadcaster = get_broadcaster()
+        for t in closed:
+            asyncio.create_task(
+                broadcaster.publish(
+                    "trade_closed",
+                    {
+                        "id": t.id,
+                        "symbol": t.symbol,
+                        "pnl": t.pnl,
+                        "exit_price": t.exit_price,
+                        "reason": "sl_or_target",
+                    },
+                )
+            )
+        # Broadcast latest prices snapshot
+        if latest_prices:
+            asyncio.create_task(
+                broadcaster.publish("mtm_update", {"prices": latest_prices})
+            )
 
         # 2. Square-off at EOD
         today_key = now_ist.strftime("%Y-%m-%d")
         if self._past_square_off(now_ist) and self._squared_off_on != today_key:
-            forced = orch.execution_agent.force_close_all(latest_prices, reason="eod_square_off")
+            forced = orch.execution_agent.force_close_all(
+                latest_prices, reason="eod_square_off"
+            )
             self._squared_off_on = today_key
             log.info("scheduler_eod_square_off", closed=len(forced))
+            summary = self._emit_eod_summary(
+                closed_in_square_off=len(forced), now=now_ist
+            )
+            asyncio.create_task(broadcaster.publish("eod_summary", summary))
             return  # don't open new trades after square-off time
 
         # 3. Generate & execute new signals per symbol (skip if already in a trade)
         from app.dal.trade_dal import TradeDAL
+
         symbols_in_trade = set(TradeDAL().list_open_symbols())
         skipped = 0
         for sym, (_exch, df) in candle_dfs.items():
@@ -287,6 +337,41 @@ class MarketScheduler:
             outcomes = orch.run(sym, df_ind)
             self.status.signals_seen += len(outcomes)
             self.status.trades_opened += sum(1 for o in outcomes if o.executed)
+            # Broadcast each outcome
+            for outcome in outcomes:
+                sig = outcome.signal or {}
+                if outcome.executed:
+                    asyncio.create_task(
+                        broadcaster.publish(
+                            "trade_opened",
+                            {
+                                "id": outcome.trade_id,
+                                "symbol": sym,
+                                "side": sig.get("side"),
+                                "strategy": sig.get("strategy"),
+                                "entry_price": outcome.fill_price,
+                                "stop_loss": sig.get("stop_loss"),
+                                "target": sig.get("target"),
+                                "qty": outcome.qty,
+                                "confidence": sig.get("confidence"),
+                            },
+                        )
+                    )
+                else:
+                    asyncio.create_task(
+                        broadcaster.publish(
+                            "signal_generated",
+                            {
+                                "symbol": sym,
+                                "strategy": sig.get("strategy"),
+                                "side": sig.get("side"),
+                                "confidence": sig.get("confidence"),
+                                "ai_approved": outcome.ai_approved,
+                                "risk_approved": outcome.risk_approved,
+                                "risk_reason": outcome.risk_reason,
+                            },
+                        )
+                    )
 
         log.info(
             "scheduler_tick_done",
@@ -296,6 +381,21 @@ class MarketScheduler:
             total_ticks=self.status.ticks,
         )
         self._maybe_log_heartbeat(now_ist)
+        # Broadcast tick summary to all WebSocket clients
+        asyncio.create_task(
+            broadcaster.publish(
+                "tick_summary",
+                {
+                    "tick": self.status.ticks,
+                    "symbols_fetched": len(candle_dfs),
+                    "skipped": skipped,
+                    "mtm_closed": len(closed),
+                    "signals_seen": self.status.signals_seen,
+                    "trades_opened": self.status.trades_opened,
+                    "timestamp": now_ist.isoformat(),
+                },
+            )
+        )
 
 
 # ---- module-level singleton ----------------------------------------------

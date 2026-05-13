@@ -8,6 +8,7 @@ Phase 3 changes:
   so conviction can build across candles (e.g. RSI fires tick 1, EMA fires tick 3).
 - At most ONE trade per symbol per tick.
 """
+
 from __future__ import annotations
 
 from collections import deque
@@ -162,6 +163,7 @@ class Orchestrator:
     def __init__(
         self,
         broker: Broker,
+        settings: Settings | None = None,
         risk_engine: RiskEngine | None = None,
         signal_agent: SignalAgent | None = None,
         validation_agent: ValidationAgent | None = None,
@@ -174,6 +176,7 @@ class Orchestrator:
 
         Args:
             broker: Broker instance (paper or live).
+            settings: Shared settings snapshot for this orchestrator.
             risk_engine: Risk engine (defaults to RiskEngine with current settings).
             signal_agent: Strategy signal generator.
             validation_agent: LLM validation agent.
@@ -182,9 +185,10 @@ class Orchestrator:
             lot_size: F&O lot size for position sizing.
             session_factory: SQLAlchemy session factory.
         """
+        self.s = settings or get_settings()
         self.broker = broker
-        self.risk = risk_engine or RiskEngine()
-        self.signal_agent = signal_agent or SignalAgent()
+        self.risk = risk_engine or RiskEngine(settings=self.s)
+        self.signal_agent = signal_agent or SignalAgent(settings=self.s)
         self.validation_agent = validation_agent or ValidationAgent()
         self.execution_agent = ExecutionAgent(broker, session_factory=session_factory)
         self.rag = rag or RAGStore()
@@ -192,6 +196,7 @@ class Orchestrator:
         self.lot_size = lot_size
         self._session_factory = session_factory
         from app.dal.trade_dal import TradeDAL
+
         self._trade_dal = TradeDAL(session_factory=session_factory)
         # Signal memory: per-symbol deque of (tick_id, Signal) tuples
         self._signal_buffer: dict[str, deque[tuple[int, Signal]]] = {}
@@ -221,16 +226,29 @@ class Orchestrator:
         Returns:
             List of PipelineOutcome (0 or 1 element).
         """
+        # Refresh settings per run so config reloads and test patches are honored.
+        self.s = get_settings()
+        if hasattr(self.signal_agent, "_settings"):
+            self.signal_agent._settings = self.s
+        if hasattr(self.signal_agent, "_strategy_cache"):
+            self.signal_agent._strategy_cache.clear()
+        if hasattr(self.risk, "s"):
+            self.risk.s = self.s
+
         signals = self.signal_agent.generate(symbol, candles)
         log.debug("pipeline_stage_signals", symbol=symbol, count=len(signals))
 
-        s = get_settings()
+        s = self.s
         self._tick_counter += 1
 
         # -- Cooldown: block new signals for signal_cooldown_ticks after last selected signal --
         cooldown = s.signal_cooldown_ticks
         last_tick = self._last_signal_tick.get(symbol)
-        if last_tick is not None and cooldown > 0 and (self._tick_counter - last_tick) < cooldown:
+        if (
+            last_tick is not None
+            and cooldown > 0
+            and (self._tick_counter - last_tick) < cooldown
+        ):
             log.debug(
                 "signal_skipped_cooldown",
                 symbol=symbol,
@@ -248,7 +266,11 @@ class Orchestrator:
         self._last_signal_tick[symbol] = self._tick_counter
         regime = detect_regime(candles)
         corroborating = sum(1 for sig in merged if sig.side == best.side)
-        return [self._process_one(best, is_expiry_day, regime=regime, corroborating_count=corroborating)]
+        return [
+            self._process_one(
+                best, is_expiry_day, regime=regime, corroborating_count=corroborating
+            )
+        ]
 
     def _merge_with_buffer(
         self,
@@ -358,14 +380,15 @@ class Orchestrator:
         Returns:
             PipelineOutcome describing the result.
         """
-        s = get_settings()
+        s = self.s
         if s.memory_source == "db":
             context_docs = self.memory.format_context(
                 sig.symbol, sig.strategy, sig.side, k=s.memory_k
             )
         elif s.memory_source == "rag":
             context_docs = self.rag.query_similar(
-                f"{sig.symbol} {sig.strategy} {sig.side} ctx={sig.context}", k=s.memory_k
+                f"{sig.symbol} {sig.strategy} {sig.side} ctx={sig.context}",
+                k=s.memory_k,
             )
         else:
             context_docs = []
@@ -374,9 +397,14 @@ class Orchestrator:
         )
 
         sig_dict = {
-            "symbol": sig.symbol, "strategy": sig.strategy, "side": sig.side,
-            "entry": sig.entry, "stop_loss": sig.stop_loss, "target": sig.target,
-            "confidence": sig.confidence, "context": sig.context,
+            "symbol": sig.symbol,
+            "strategy": sig.strategy,
+            "side": sig.side,
+            "entry": sig.entry,
+            "stop_loss": sig.stop_loss,
+            "target": sig.target,
+            "confidence": sig.confidence,
+            "context": sig.context,
         }
 
         signal_id = self._persist_signal(
@@ -388,23 +416,37 @@ class Orchestrator:
         )
 
         if not validation.approved:
-            log.info("signal_rejected_by_ai", **sig_dict, reasoning=validation.reasoning)
+            log.info(
+                "signal_rejected_by_ai", **sig_dict, reasoning=validation.reasoning
+            )
             return PipelineOutcome(
-                signal=sig_dict, signal_id=signal_id,
-                ai_approved=False, ai_reasoning=validation.reasoning,
-                risk_approved=False, risk_reason="ai_rejected", qty=0, executed=False,
+                signal=sig_dict,
+                signal_id=signal_id,
+                ai_approved=False,
+                ai_reasoning=validation.reasoning,
+                risk_approved=False,
+                risk_reason="ai_rejected",
+                qty=0,
+                executed=False,
             )
 
         if validation.adjusted_stop is not None:
             sig.stop_loss = float(validation.adjusted_stop)
 
-        risk = self.risk.evaluate(sig, lot_size=self.lot_size, is_expiry_day=is_expiry_day)
+        risk = self.risk.evaluate(
+            sig, lot_size=self.lot_size, is_expiry_day=is_expiry_day
+        )
         if not risk.approved:
             log.info("signal_rejected_by_risk", **sig_dict, reason=risk.reason)
             return PipelineOutcome(
-                signal=sig_dict, signal_id=signal_id,
-                ai_approved=True, ai_reasoning=validation.reasoning,
-                risk_approved=False, risk_reason=risk.reason, qty=0, executed=False,
+                signal=sig_dict,
+                signal_id=signal_id,
+                ai_approved=True,
+                ai_reasoning=validation.reasoning,
+                risk_approved=False,
+                risk_reason=risk.reason,
+                qty=0,
+                executed=False,
             )
 
         result = self.execution_agent.execute(sig, risk.qty, signal_row_id=signal_id)
@@ -413,9 +455,15 @@ class Orchestrator:
         trade_id = self._trade_dal.find_by_broker_order_id(result.order_id)
 
         return PipelineOutcome(
-            signal=sig_dict, signal_id=signal_id,
-            ai_approved=True, ai_reasoning=validation.reasoning,
-            risk_approved=True, risk_reason="ok", qty=risk.qty,
-            executed=True, trade_id=trade_id,
-            order_id=result.order_id, fill_price=result.avg_price,
+            signal=sig_dict,
+            signal_id=signal_id,
+            ai_approved=True,
+            ai_reasoning=validation.reasoning,
+            risk_approved=True,
+            risk_reason="ok",
+            qty=risk.qty,
+            executed=True,
+            trade_id=trade_id,
+            order_id=result.order_id,
+            fill_price=result.avg_price,
         )

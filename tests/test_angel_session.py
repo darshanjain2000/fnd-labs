@@ -1,4 +1,5 @@
 """Tests for AngelSession — no live creds needed, uses FakeSmart."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -21,7 +22,16 @@ class FakeSmart:
         # Return 5 fake bars
         rows = []
         for i in range(5):
-            rows.append([f"2026-04-18 09:{15 + i}:00", 100 + i, 102 + i, 99 + i, 101 + i, 1000 + i * 100])
+            rows.append(
+                [
+                    f"2026-04-18 09:{15 + i}:00",
+                    100 + i,
+                    102 + i,
+                    99 + i,
+                    101 + i,
+                    1000 + i * 100,
+                ]
+            )
         return {"status": True, "data": rows}
 
 
@@ -45,7 +55,13 @@ def test_resolve_token_caches(sess):
 
 
 def test_candles_returns_dataframe(sess):
-    df = sess.candles("NFO", "99926004", "5m", datetime(2026, 4, 18, 9, 15), datetime(2026, 4, 18, 15, 30))
+    df = sess.candles(
+        "NFO",
+        "99926004",
+        "5m",
+        datetime(2026, 4, 18, 9, 15),
+        datetime(2026, 4, 18, 15, 30),
+    )
     assert isinstance(df, pd.DataFrame)
     assert set(df.columns) >= {"open", "high", "low", "close", "volume", "datetime"}
     assert len(df) == 5

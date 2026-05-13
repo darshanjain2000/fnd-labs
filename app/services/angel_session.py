@@ -16,6 +16,7 @@ Intervals accepted by Angel
   ONE_MINUTE THREE_MINUTE FIVE_MINUTE TEN_MINUTE FIFTEEN_MINUTE
   THIRTY_MINUTE ONE_HOUR ONE_DAY
 """
+
 from __future__ import annotations
 
 import threading
@@ -31,14 +32,14 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 _INTERVAL_MAP = {
-    "1m":  "ONE_MINUTE",
-    "3m":  "THREE_MINUTE",
-    "5m":  "FIVE_MINUTE",
+    "1m": "ONE_MINUTE",
+    "3m": "THREE_MINUTE",
+    "5m": "FIVE_MINUTE",
     "10m": "TEN_MINUTE",
     "15m": "FIFTEEN_MINUTE",
     "30m": "THIRTY_MINUTE",
-    "1h":  "ONE_HOUR",
-    "1d":  "ONE_DAY",
+    "1h": "ONE_HOUR",
+    "1d": "ONE_DAY",
 }
 
 
@@ -62,16 +63,20 @@ class AngelSession:
             s = get_settings()
             # Defensive strip — .env values often have trailing spaces
             api_key = (s.angel_api_key or "").strip()
-            client  = (s.angel_client_code or "").strip()
-            pin     = (s.angel_pin or "").strip()
-            secret  = (s.angel_totp_secret or "").strip().replace(" ", "").upper()
+            client = (s.angel_client_code or "").strip()
+            pin = (s.angel_pin or "").strip()
+            secret = (s.angel_totp_secret or "").strip().replace(" ", "").upper()
 
-            missing = [k for k, v in {
-                "ANGEL_API_KEY": api_key,
-                "ANGEL_CLIENT_CODE": client,
-                "ANGEL_PIN": pin,
-                "ANGEL_TOTP_SECRET": secret,
-            }.items() if not v]
+            missing = [
+                k
+                for k, v in {
+                    "ANGEL_API_KEY": api_key,
+                    "ANGEL_CLIENT_CODE": client,
+                    "ANGEL_PIN": pin,
+                    "ANGEL_TOTP_SECRET": secret,
+                }.items()
+                if not v
+            ]
             if missing:
                 raise RuntimeError(
                     f"Angel credentials not set — add to .env: {', '.join(missing)}"
@@ -137,11 +142,13 @@ class AngelSession:
         import json
         import urllib.request
         from pathlib import Path
+
         cache = Path(".cache/angel_scrip_master.json")
         cache.parent.mkdir(exist_ok=True)
         # Use daily cache to avoid re-downloading (file is ~50MB)
         if cache.exists():
             import time as _t
+
             age_hrs = (_t.time() - cache.stat().st_mtime) / 3600
             if age_hrs < 24:
                 cls._scrip_master = json.loads(cache.read_text(encoding="utf-8"))
@@ -166,19 +173,26 @@ class AngelSession:
             sym_u = tradingsymbol.upper()
             # Map user exchange to Angel's exch_seg tag
             exch_map = {
-                "NSE": "NSE", "BSE": "BSE", "NFO": "NFO", "BFO": "BFO",
-                "MCX": "MCX", "CDS": "CDS",
+                "NSE": "NSE",
+                "BSE": "BSE",
+                "NFO": "NFO",
+                "BFO": "BFO",
+                "MCX": "MCX",
+                "CDS": "CDS",
                 # lowercase variants from scrip master (older dumps use nse_cm etc.)
             }
             target = exch_map.get(exchange.upper(), exchange.upper())
             rows = [
-                r for r in master
-                if str(r.get("exch_seg", "")).upper() in (target, f"{target}_CM", f"{target}_FO")
+                r
+                for r in master
+                if str(r.get("exch_seg", "")).upper()
+                in (target, f"{target}_CM", f"{target}_FO")
             ]
             # For NSE/BSE index queries (e.g. "NIFTY", "BANKNIFTY"), prefer AMXIDX rows
             # — Angel stores the real index under symbol="Nifty 50", name="NIFTY".
             index_rows = [
-                r for r in rows
+                r
+                for r in rows
                 if str(r.get("instrumenttype", "")).upper() in ("AMXIDX", "INDEX")
                 and str(r.get("name", "")).upper() == sym_u
             ]
@@ -186,18 +200,34 @@ class AngelSession:
                 hit = index_rows[0]
             else:
                 # Exact tradingsymbol match first
-                hit = next((r for r in rows if str(r.get("symbol", "")).upper() == sym_u), None)
+                hit = next(
+                    (r for r in rows if str(r.get("symbol", "")).upper() == sym_u), None
+                )
                 # Then name-based exact match (equity without -EQ suffix etc.)
                 if not hit:
-                    hit = next((r for r in rows if str(r.get("name", "")).upper() == sym_u), None)
+                    hit = next(
+                        (r for r in rows if str(r.get("name", "")).upper() == sym_u),
+                        None,
+                    )
                 # Then prefix match
                 if not hit:
-                    hit = next((r for r in rows if str(r.get("symbol", "")).upper().startswith(sym_u)), None)
+                    hit = next(
+                        (
+                            r
+                            for r in rows
+                            if str(r.get("symbol", "")).upper().startswith(sym_u)
+                        ),
+                        None,
+                    )
             if hit:
                 token = str(hit.get("token"))
                 self._token_cache[key] = token
-                log.debug("angel_token_resolved_local",
-                          symbol=tradingsymbol, token=token, matched=hit.get("symbol"))
+                log.debug(
+                    "angel_token_resolved_local",
+                    symbol=tradingsymbol,
+                    token=token,
+                    matched=hit.get("symbol"),
+                )
                 return token
         except Exception as e:
             # Broad catch: scrip-master parsing can fail in many ways (pandas dtype
@@ -216,11 +246,65 @@ class AngelSession:
                 res = api.searchScrip(exchange=exchange, searchtext=tradingsymbol)
         data = res.get("data") if isinstance(res, dict) else None
         if not data:
-            raise RuntimeError(f"Angel token not found for {tradingsymbol} on {exchange}")
+            raise RuntimeError(
+                f"Angel token not found for {tradingsymbol} on {exchange}"
+            )
         token = str(data[0].get("symboltoken") or data[0].get("token"))
         self._token_cache[key] = token
         log.debug("angel_token_resolved", symbol=tradingsymbol, token=token)
         return token
+
+    def search_symbols(
+        self,
+        query: str,
+        exchange: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, str]]:
+        """Search the Angel scrip master for matching symbols.
+
+        Args:
+            query: User-entered free text (symbol prefix or name fragment).
+            exchange: Optional exchange filter (e.g. ``NSE``, ``NFO``).
+            limit: Maximum number of matches to return.
+
+        Returns:
+            A list of symbol dicts with keys: ``symbol``, ``name``, ``exchange``,
+            ``token``, ``instrumenttype``.
+        """
+        q = (query or "").strip().upper()
+        if not q:
+            return []
+        master = self._load_scrip_master()
+        exch = (exchange or "").strip().upper()
+
+        def _match(r: dict) -> bool:
+            exch_seg = str(r.get("exch_seg", "")).upper()
+            if exch and exch not in exch_seg:
+                return False
+            symbol = str(r.get("symbol", "")).upper()
+            name = str(r.get("name", "")).upper()
+            return q in symbol or q in name
+
+        rows = [r for r in master if _match(r)]
+        # Prefer prefix matches over contains matches so typeahead feels natural.
+        rows.sort(
+            key=lambda r: (
+                not str(r.get("symbol", "")).upper().startswith(q),
+                str(r.get("symbol", "")).upper(),
+            )
+        )
+        out: list[dict[str, str]] = []
+        for r in rows[: max(1, min(limit, 100))]:
+            out.append(
+                {
+                    "symbol": str(r.get("symbol", "")),
+                    "name": str(r.get("name", "")),
+                    "exchange": str(r.get("exch_seg", "")),
+                    "token": str(r.get("token", "")),
+                    "instrumenttype": str(r.get("instrumenttype", "")),
+                }
+            )
+        return out
 
     # ---- historical OHLCV ------------------------------------------------
     def candles(
@@ -246,7 +330,9 @@ class AngelSession:
         if not resp.get("status") or not resp.get("data"):
             raise RuntimeError(f"Angel candle fetch failed: {resp}")
         data = resp["data"]
-        df = pd.DataFrame(data, columns=["datetime", "open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(
+            data, columns=["datetime", "open", "high", "low", "close", "volume"]
+        )
         df["datetime"] = pd.to_datetime(df["datetime"])
         df = df.sort_values("datetime").reset_index(drop=True)
         log.info(
@@ -273,8 +359,14 @@ class AngelSession:
         if from_dt is None:
             # default lookback in CALENDAR days — generous enough to span weekends/holidays
             calendar_days = {
-                "1m": 3, "3m": 5, "5m": 10, "10m": 15,
-                "15m": 20, "30m": 30, "1h": 45, "1d": 180,
+                "1m": 3,
+                "3m": 5,
+                "5m": 10,
+                "10m": 15,
+                "15m": 20,
+                "30m": 30,
+                "1h": 45,
+                "1d": 180,
             }.get(interval, 10)
             from_dt = to_dt - timedelta(days=calendar_days)
         return self.candles(exchange, token, interval, from_dt, to_dt, symbol=symbol)
@@ -299,8 +391,15 @@ def reset_angel_session() -> None:
 def _sub_bars(dt: datetime, interval: str, bars: int) -> datetime:
     """Subtract `bars` intervals from dt."""
     from datetime import timedelta
+
     minutes = {
-        "1m": 1, "3m": 3, "5m": 5, "10m": 10,
-        "15m": 15, "30m": 30, "1h": 60, "1d": 1440,
+        "1m": 1,
+        "3m": 3,
+        "5m": 5,
+        "10m": 10,
+        "15m": 15,
+        "30m": 30,
+        "1h": 60,
+        "1d": 1440,
     }.get(interval, 5)
     return dt - timedelta(minutes=minutes * bars)

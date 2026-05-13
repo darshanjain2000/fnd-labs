@@ -1,4 +1,5 @@
 """Position repository — all DB access for the ``positions`` table."""
+
 from __future__ import annotations
 
 from app.dal.base import BaseRepository
@@ -11,7 +12,9 @@ class PositionDAL(BaseRepository):
     def get_by_symbol(self, symbol: str) -> Position | None:
         """Return the position row for ``symbol`` or ``None``."""
         with self._session() as session:
-            row = session.query(Position).filter(Position.symbol == symbol).one_or_none()
+            row = (
+                session.query(Position).filter(Position.symbol == symbol).one_or_none()
+            )
             if row is None:
                 return None
             session.expunge(row)

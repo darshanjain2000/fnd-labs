@@ -1,4 +1,5 @@
 """Pipeline analysis endpoints (client-supplied candles or live Angel fetch)."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends

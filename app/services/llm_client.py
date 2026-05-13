@@ -1,4 +1,5 @@
 """OpenRouter client with JSON response + daily spend cap."""
+
 from __future__ import annotations
 
 import json
@@ -43,7 +44,9 @@ class LLMClient:
         inp, out = _COSTS.get(self.s.openrouter_model, (5.0, 15.0))
         return (prompt_tokens * inp + completion_tokens * out) / 1_000_000
 
-    def chat_json(self, system: str, user: str, schema_hint: str = "") -> dict[str, Any]:
+    def chat_json(
+        self, system: str, user: str, schema_hint: str = ""
+    ) -> dict[str, Any]:
         """Synchronous call, returns parsed JSON dict or {} on failure/unavailable."""
         self._reset_if_new_day()
         if self._spend_usd >= self.s.openrouter_daily_usd_cap:
@@ -52,7 +55,9 @@ class LLMClient:
             log.warning("llm_no_api_key_degrade")
             return {}
 
-        sys_prompt = system + (("\n\nRespond ONLY with JSON. " + schema_hint) if schema_hint else "")
+        sys_prompt = system + (
+            ("\n\nRespond ONLY with JSON. " + schema_hint) if schema_hint else ""
+        )
         payload = {
             "model": self.s.openrouter_model,
             "messages": [

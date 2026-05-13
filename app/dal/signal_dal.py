@@ -1,4 +1,5 @@
 """Signal repository — all DB access for the ``signals`` table."""
+
 from __future__ import annotations
 
 from sqlalchemy import desc
@@ -23,7 +24,12 @@ class SignalDAL(BaseRepository):
     def list_recent(self, limit: int = 50) -> list[Signal]:
         """Return the most recent signals, newest first."""
         with self._session() as session:
-            rows = session.query(Signal).order_by(desc(Signal.created_at)).limit(limit).all()
+            rows = (
+                session.query(Signal)
+                .order_by(desc(Signal.created_at))
+                .limit(limit)
+                .all()
+            )
             for r in rows:
                 session.expunge(r)
             return rows

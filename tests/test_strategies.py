@@ -15,6 +15,7 @@ from app.strategies.supertrend import SupertrendStrategy
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _candles(closes: list[float], with_datetime_index: bool = False) -> pd.DataFrame:
     """Build a minimal OHLCV DataFrame with indicators computed."""
     n = len(closes)
@@ -36,6 +37,7 @@ def _candles(closes: list[float], with_datetime_index: bool = False) -> pd.DataF
 # ---------------------------------------------------------------------------
 # RSIReversal (existing)
 # ---------------------------------------------------------------------------
+
 
 def test_rsi_reversal_fires_on_deep_oversold() -> None:
     # monotonic decline -> RSI very low
@@ -67,6 +69,7 @@ def test_rsi_reversal_silent_in_range() -> None:
 # SupertrendStrategy
 # ---------------------------------------------------------------------------
 
+
 def test_supertrend_returns_buy_on_bullish_flip() -> None:
     """Strong uptrend should produce a bullish Supertrend direction and eventually flip."""
     # Sharp drop then sharp rise → guarantees a bearish→bullish flip
@@ -79,7 +82,9 @@ def test_supertrend_returns_buy_on_bullish_flip() -> None:
             assert sig.stop_loss < sig.entry
             assert sig.target > sig.entry
             return
-    pytest.skip("No bullish Supertrend flip detected with this data — check indicator values")
+    pytest.skip(
+        "No bullish Supertrend flip detected with this data — check indicator values"
+    )
 
 
 def test_supertrend_returns_sell_on_bearish_flip() -> None:
@@ -111,6 +116,7 @@ def test_supertrend_preferred_regimes() -> None:
 # ---------------------------------------------------------------------------
 # MACDDivergence
 # ---------------------------------------------------------------------------
+
 
 def test_macd_divergence_buy_signal() -> None:
     """Deep decline followed by recovery: MACD crosses up from below-zero territory."""
@@ -152,6 +158,7 @@ def test_macd_divergence_none_on_short_series() -> None:
 # BollingerSqueeze
 # ---------------------------------------------------------------------------
 
+
 def test_bollinger_squeeze_upside_breakout() -> None:
     """Tight range then sudden spike triggers a BUY."""
     # Flat price for most candles (creates a squeeze), then sharp rise
@@ -187,6 +194,7 @@ def test_bollinger_squeeze_none_on_short_series() -> None:
 # ---------------------------------------------------------------------------
 # ORBBreakout
 # ---------------------------------------------------------------------------
+
 
 def test_orb_breakout_requires_datetime_index() -> None:
     df = _candles([100.0] * 80)  # no datetime index
@@ -228,9 +236,11 @@ def test_orb_breakout_no_signal_inside_orb_window() -> None:
     idx = pd.date_range("2025-01-02 09:15", periods=n, freq="1min")
     df = pd.DataFrame(
         {
-            "open": closes, "high": [c * 1.001 for c in closes],
+            "open": closes,
+            "high": [c * 1.001 for c in closes],
             "low": [c * 0.999 for c in closes],
-            "close": closes, "volume": [1000] * n,
+            "close": closes,
+            "volume": [1000] * n,
         },
         index=idx,
     )
@@ -241,6 +251,7 @@ def test_orb_breakout_no_signal_inside_orb_window() -> None:
 # ---------------------------------------------------------------------------
 # compute_indicators — new columns
 # ---------------------------------------------------------------------------
+
 
 def test_compute_indicators_adds_macd_columns() -> None:
     closes = list(np.linspace(100, 200, 80))
@@ -274,12 +285,18 @@ def test_compute_indicators_adds_supertrend() -> None:
 # resample_to_htf
 # ---------------------------------------------------------------------------
 
+
 def test_resample_to_htf_reduces_row_count() -> None:
     closes = list(np.linspace(100, 200, 200))
     idx = pd.date_range("2025-01-02 09:15", periods=200, freq="1min")
     df = pd.DataFrame(
-        {"open": closes, "high": [c * 1.001 for c in closes],
-         "low": [c * 0.999 for c in closes], "close": closes, "volume": [1000] * 200},
+        {
+            "open": closes,
+            "high": [c * 1.001 for c in closes],
+            "low": [c * 0.999 for c in closes],
+            "close": closes,
+            "volume": [1000] * 200,
+        },
         index=idx,
     )
     htf = resample_to_htf(df, target_interval="15min")
@@ -297,6 +314,7 @@ def test_resample_to_htf_raises_without_datetime_index() -> None:
 # applies_to_regime across all strategies
 # ---------------------------------------------------------------------------
 
+
 def test_rsi_reversal_applies_to_range_regime() -> None:
     assert RSIReversal().applies_to_regime("range")
 
@@ -304,4 +322,3 @@ def test_rsi_reversal_applies_to_range_regime() -> None:
 def test_ema_breakout_applies_to_trend_regime() -> None:
     assert EMABreakout().applies_to_regime("trend_up")
     assert EMABreakout().applies_to_regime("trend_down")
-

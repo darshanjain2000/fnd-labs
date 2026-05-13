@@ -1,4 +1,5 @@
 """Trade repository — all DB access for the ``trades`` table."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -24,7 +25,9 @@ class TradeDAL(BaseRepository):
     def list_recent(self, limit: int = 50) -> list[Trade]:
         """Return the most recent trades, newest first."""
         with self._session() as session:
-            rows = session.query(Trade).order_by(desc(Trade.opened_at)).limit(limit).all()
+            rows = (
+                session.query(Trade).order_by(desc(Trade.opened_at)).limit(limit).all()
+            )
             for r in rows:
                 session.expunge(r)
             return rows
@@ -85,7 +88,9 @@ class TradeDAL(BaseRepository):
     ) -> list[Trade]:
         """Return the last ``limit`` CLOSED trades for ``symbol`` (most recent first)."""
         with self._session() as session:
-            q = session.query(Trade).filter(Trade.status == "CLOSED", Trade.symbol == symbol)
+            q = session.query(Trade).filter(
+                Trade.status == "CLOSED", Trade.symbol == symbol
+            )
             if strategy:
                 q = q.filter(Trade.strategy == strategy)
             if side:

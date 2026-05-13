@@ -1,4 +1,5 @@
 """Generic ``ApiResponse[T]`` envelope used by every API handler."""
+
 from __future__ import annotations
 
 from typing import Generic, TypeVar
@@ -32,7 +33,9 @@ class ApiResponse(BaseModel, Generic[T]):
     error: str | None = None
 
     @classmethod
-    def ok(cls, result: T, *, message: str | None = None, status_code: int = 200) -> ApiResponse[T]:
+    def ok(
+        cls, result: T, *, message: str | None = None, status_code: int = 200
+    ) -> ApiResponse[T]:
         """Build a success envelope.
 
         Args:
@@ -57,4 +60,9 @@ class ApiResponse(BaseModel, Generic[T]):
             ``ApiResponse`` with ``result`` unset.
         """
         code: CustomExceptionCodes = exc.error_code
-        return cls(statusCode=int(code), message=None, result=None, error=str(exc) or exc.__class__.__name__)
+        return cls(
+            statusCode=int(code),
+            message=None,
+            result=None,
+            error=str(exc) or exc.__class__.__name__,
+        )

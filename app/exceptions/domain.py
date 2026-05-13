@@ -1,4 +1,5 @@
 """Concrete domain exceptions raised by services, controllers, and DAL."""
+
 from __future__ import annotations
 
 from app.enums.exception_codes import CustomExceptionCodes

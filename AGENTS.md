@@ -1,6 +1,6 @@
 # trading-poc — Agent & Contributor Guidelines
 
-> Read `docs/ARCHITECTURE.md` for a full component map and `docs/plan.md` for the roadmap.
+> Read `docs/ARCHITECTURE.md` for a full component map, `docs/plan.md` for roadmap status, and `docs/WORKFLOW.md` for full operator workflow and commands.
 > This file exists to orient AI agents and new contributors so they can work faster and safer.
 
 ---
@@ -20,7 +20,7 @@ All state lives in SQLite; all control is via a FastAPI HTTP API.
 ```
 Scheduler (heartbeat every 60s)
   └─ per-symbol pipeline:
-       SignalAgent (3 strategies)
+             SignalAgent (enabled strategy set)
          → ValidationAgent (LLM via OpenRouter, optional)
            → RiskEngine (7 hard gates)
              → ExecutionAgent (broker + SQLite)
@@ -48,7 +48,7 @@ python app/main.py
 ```
 
 When adding a feature, add tests in `tests/`. Run `pytest -q` before finishing.
-Target: **all tests pass**. The baseline is 104 tests (102 passing + 2 skipped, network-gated).
+Target: **all tests pass**.
 
 ---
 

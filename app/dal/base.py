@@ -4,6 +4,7 @@ Concrete DALs subclass ``BaseRepository`` and use ``_session()`` to open a
 scoped SQLAlchemy session. Sessions are always closed automatically, even
 on exception paths.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator

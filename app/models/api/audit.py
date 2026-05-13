@@ -1,4 +1,5 @@
 """Pydantic DTOs for the ``/logs`` router."""
+
 from __future__ import annotations
 
 from datetime import datetime

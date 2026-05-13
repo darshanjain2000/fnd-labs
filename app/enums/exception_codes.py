@@ -4,6 +4,7 @@ The 6xx range is reserved for project-specific domain errors so callers can
 distinguish them from standard HTTP status codes. Every domain exception in
 ``app.exceptions`` maps to exactly one code here.
 """
+
 from __future__ import annotations
 
 from enum import IntEnum

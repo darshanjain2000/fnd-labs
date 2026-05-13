@@ -1,4 +1,5 @@
 """Unit tests for :class:`app.services.execution_service.ExecutionService`."""
+
 from __future__ import annotations
 
 from app.dal.trade_dal import TradeDAL
@@ -139,6 +140,8 @@ def test_force_close_all_uses_entry_price_when_quote_missing(db_factory) -> None
 
 def test_breach_reason_sell_side() -> None:
     # SELL: SL above entry, target below entry
-    assert ExecutionService._breach_reason("SELL", 105.0, 102.0, 95.0) == "stop_loss_hit"
+    assert (
+        ExecutionService._breach_reason("SELL", 105.0, 102.0, 95.0) == "stop_loss_hit"
+    )
     assert ExecutionService._breach_reason("SELL", 94.0, 102.0, 95.0) == "target_hit"
     assert ExecutionService._breach_reason("SELL", 100.0, 102.0, 95.0) is None

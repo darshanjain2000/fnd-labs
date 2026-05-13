@@ -1,4 +1,5 @@
 """Tests for the ``app.exceptions`` domain hierarchy + ``CustomExceptionCodes``."""
+
 from __future__ import annotations
 
 import pytest

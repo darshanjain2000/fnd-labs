@@ -1,4 +1,5 @@
 """Strategy-signal list endpoint."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -13,5 +14,7 @@ router = APIRouter(prefix="/signals", tags=["signals"])
 def list_signals(limit: int = 50) -> ApiResponse[SignalListOut]:
     """List the most recent strategy signals (with AI verdicts)."""
     rows = SignalDAL().list_recent(limit=limit)
-    payload = SignalListOut(count=len(rows), signals=[SignalOut.from_row(r) for r in rows])
+    payload = SignalListOut(
+        count=len(rows), signals=[SignalOut.from_row(r) for r in rows]
+    )
     return ApiResponse[SignalListOut].ok(payload)

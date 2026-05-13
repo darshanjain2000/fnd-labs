@@ -10,6 +10,7 @@ Usage::
         --trials 50 \\
         --output config/optimized_params.yaml
 """
+
 from __future__ import annotations
 
 import argparse
@@ -263,38 +264,54 @@ def save_params(results: list[dict[str, Any]], path: str) -> None:
     else:
         with open(path, "w") as fh:
             json.dump(results, fh, indent=2)
-    log.info("optuna_params_saved", path=path, strategies=[r["strategy"] for r in results])
+    log.info(
+        "optuna_params_saved", path=path, strategies=[r["strategy"] for r in results]
+    )
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def _main() -> None:
     """CLI: ``python -m app.backtest.optimize``."""
     from app.strategies import ALL_STRATEGIES
 
-    parser = argparse.ArgumentParser(description="Optimise strategy hyperparameters with Optuna.")
+    parser = argparse.ArgumentParser(
+        description="Optimise strategy hyperparameters with Optuna."
+    )
     parser.add_argument("--strategy", default="all")
     parser.add_argument("--trials", type=int, default=50)
-    parser.add_argument("--metric", default="sortino", choices=["sortino", "sharpe", "win_rate"])
+    parser.add_argument(
+        "--metric", default="sortino", choices=["sortino", "sharpe", "win_rate"]
+    )
     parser.add_argument("--output", default="config/optimized_params.yaml")
     parser.add_argument("--capital", type=float, default=25_000.0)
     parser.add_argument("--risk-pct", type=float, default=1.0)
     parser.add_argument(
-        "--symbol", default=None,
+        "--symbol",
+        default=None,
         help="NSE symbol (e.g. NIFTY). When provided with --from/--to, uses real data.",
     )
     parser.add_argument(
-        "--from", dest="from_date", default=None,
+        "--from",
+        dest="from_date",
+        default=None,
         help="Start date YYYY-MM-DD (uses Angel API for real data).",
     )
     parser.add_argument(
-        "--to", dest="to_date", default=None,
+        "--to",
+        dest="to_date",
+        default=None,
         help="End date YYYY-MM-DD (uses Angel API for real data).",
     )
-    parser.add_argument("--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m)")
-    parser.add_argument("--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)")
+    parser.add_argument(
+        "--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m)"
+    )
+    parser.add_argument(
+        "--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)"
+    )
     args = parser.parse_args()
 
     target_classes = (
@@ -316,8 +333,11 @@ def _main() -> None:
             interval=args.interval,
         )
         df = _fetch_real_data(
-            args.symbol, args.exchange, args.interval,
-            args.from_date, args.to_date,
+            args.symbol,
+            args.exchange,
+            args.interval,
+            args.from_date,
+            args.to_date,
         )
     else:
         log.info("optimize_using_synthetic_data")
@@ -326,8 +346,12 @@ def _main() -> None:
     all_results: list[dict[str, Any]] = []
     for cls in target_classes:
         result = optimize(
-            cls, df=df, n_trials=args.trials, metric=args.metric,
-            capital=args.capital, risk_pct=args.risk_pct,
+            cls,
+            df=df,
+            n_trials=args.trials,
+            metric=args.metric,
+            capital=args.capital,
+            risk_pct=args.risk_pct,
             symbol=args.symbol,
         )
         all_results.append(result)
@@ -335,6 +359,7 @@ def _main() -> None:
 
     if args.output:
         import os
+
         os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
         save_params(all_results, args.output)
 

@@ -1,4 +1,5 @@
 """Unit tests for :class:`app.services.signal_service.SignalService`."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -11,7 +12,9 @@ class _FakeStrategy(Strategy):
     name = "fake"
     preferred_regimes = ("trend_up", "trend_down", "range", "high_vol")
 
-    def __init__(self, signal: Signal | None = None, *, raises: Exception | None = None) -> None:
+    def __init__(
+        self, signal: Signal | None = None, *, raises: Exception | None = None
+    ) -> None:
         self._signal = signal
         self._raises = raises
 
@@ -33,7 +36,9 @@ def _signal(side: str = "BUY", strategy: str = "fake") -> Signal:
     )
 
 
-def test_generate_returns_signals_from_enabled_strategies(make_candles, make_settings) -> None:
+def test_generate_returns_signals_from_enabled_strategies(
+    make_candles, make_settings
+) -> None:
     sig = _signal()
     svc = SignalService(
         strategies=[_FakeStrategy(sig)],
@@ -51,7 +56,9 @@ def test_generate_swallows_strategy_exceptions(make_candles, make_settings) -> N
     assert svc.generate("X", make_candles()) == []
 
 
-def test_generate_skips_strategies_that_dont_match_regime(make_candles, make_settings) -> None:
+def test_generate_skips_strategies_that_dont_match_regime(
+    make_candles, make_settings
+) -> None:
     class OnlyRange(_FakeStrategy):
         preferred_regimes = ("range",)
 
@@ -69,7 +76,9 @@ def test_generate_applies_htf_agreement_filter(make_candles, make_settings) -> N
         strategies=[_FakeStrategy(_signal("BUY"))],
         settings=make_settings(require_htf_agreement=True),
     )
-    htf = pd.DataFrame({"ema20": [10.0], "ema50": [20.0]})  # 20>50 inverted → BUY rejected
+    htf = pd.DataFrame(
+        {"ema20": [10.0], "ema50": [20.0]}
+    )  # 20>50 inverted → BUY rejected
     assert svc.generate("X", make_candles(), htf_candles=htf) == []
 
 

@@ -1,4 +1,5 @@
 """RAG: local sentence-transformers embeddings + Chroma persistent store."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -36,7 +37,9 @@ class RAGStore:
         if not self._lazy_init():
             return
         emb = self._embedder.encode([text]).tolist()
-        self._collection.add(ids=[doc_id], embeddings=emb, documents=[text], metadatas=[metadata])
+        self._collection.add(
+            ids=[doc_id], embeddings=emb, documents=[text], metadatas=[metadata]
+        )
 
     def query(self, text: str, k: int = 3) -> list[str]:
         if not self._lazy_init():

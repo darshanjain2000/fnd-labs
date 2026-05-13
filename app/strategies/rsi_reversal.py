@@ -9,7 +9,9 @@ class RSIReversal(Strategy):
     name = "rsi_reversal"
     preferred_regimes = ("range",)
 
-    def __init__(self, oversold: float = 30.0, overbought: float = 70.0, atr_mult: float = 1.5) -> None:
+    def __init__(
+        self, oversold: float = 30.0, overbought: float = 70.0, atr_mult: float = 1.5
+    ) -> None:
         self.oversold = oversold
         self.overbought = overbought
         self.atr_mult = atr_mult

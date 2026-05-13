@@ -1,11 +1,15 @@
 """End-of-day report endpoints."""
+
 from __future__ import annotations
 
 from collections import defaultdict
+from csv import DictWriter
 from datetime import date, datetime, time as dtime
+from io import StringIO
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -35,10 +39,50 @@ def report_today(session: Session = Depends(get_session)) -> ApiResponse[ReportO
 
 
 @router.get("/day/{day_iso}", response_model=ApiResponse[ReportOut])
-def report_day(day_iso: str, session: Session = Depends(get_session)) -> ApiResponse[ReportOut]:
+def report_day(
+    day_iso: str, session: Session = Depends(get_session)
+) -> ApiResponse[ReportOut]:
     """End-of-day summary for a specific IST calendar day (``YYYY-MM-DD``)."""
     target = date.fromisoformat(day_iso)
     return ApiResponse[ReportOut].ok(_report_for(target, session))
+
+
+@router.get("/today/export", response_model=None)
+def export_today(
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+    session: Session = Depends(get_session),
+) -> ApiResponse[dict] | PlainTextResponse:
+    """Export today's IST EOD report as JSON envelope or CSV.
+
+    Args:
+        format: ``json`` (default) or ``csv``.
+        session: SQLAlchemy DB session dependency.
+
+    Returns:
+        JSON envelope by default, or a CSV plaintext response.
+    """
+    target = datetime.now(IST).date()
+    return _export_for(target, format=format, session=session)
+
+
+@router.get("/day/{day_iso}/export", response_model=None)
+def export_day(
+    day_iso: str,
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+    session: Session = Depends(get_session),
+) -> ApiResponse[dict] | PlainTextResponse:
+    """Export a specific IST day EOD report as JSON envelope or CSV.
+
+    Args:
+        day_iso: Day in ``YYYY-MM-DD`` format.
+        format: ``json`` (default) or ``csv``.
+        session: SQLAlchemy DB session dependency.
+
+    Returns:
+        JSON envelope by default, or a CSV plaintext response.
+    """
+    target = date.fromisoformat(day_iso)
+    return _export_for(target, format=format, session=session)
 
 
 def _report_for(target: date, session: Session) -> ReportOut:
@@ -64,11 +108,17 @@ def _report_for(target: date, session: Session) -> ReportOut:
     losses = [t for t in closed if (t.pnl or 0) < 0]
     total_pnl = round(sum((t.pnl or 0) for t in closed), 2)
 
-    per_symbol: dict[str, dict[str, float]] = defaultdict(lambda: {"trades": 0, "pnl": 0.0})
-    per_strategy: dict[str, dict[str, float]] = defaultdict(lambda: {"trades": 0, "pnl": 0.0})
+    per_symbol: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"trades": 0, "pnl": 0.0}
+    )
+    per_strategy: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"trades": 0, "pnl": 0.0}
+    )
     for t in closed:
         per_symbol[t.symbol]["trades"] += 1
-        per_symbol[t.symbol]["pnl"] = round(per_symbol[t.symbol]["pnl"] + (t.pnl or 0), 2)
+        per_symbol[t.symbol]["pnl"] = round(
+            per_symbol[t.symbol]["pnl"] + (t.pnl or 0), 2
+        )
         key = t.strategy or "unknown"
         per_strategy[key]["trades"] += 1
         per_strategy[key]["pnl"] = round(per_strategy[key]["pnl"] + (t.pnl or 0), 2)
@@ -94,8 +144,60 @@ def _report_for(target: date, session: Session) -> ReportOut:
             for sym, buckets in per_symbol.items()
         },
         per_strategy={
-            strat: ReportBucket(trades=int(buckets["trades"]), pnl=float(buckets["pnl"]))
+            strat: ReportBucket(
+                trades=int(buckets["trades"]), pnl=float(buckets["pnl"])
+            )
             for strat, buckets in per_strategy.items()
         },
         trades=[TradeOut.from_row(t) for t in trades],
     )
+
+
+def _export_for(
+    target: date,
+    *,
+    format: str,
+    session: Session,
+) -> ApiResponse[dict] | PlainTextResponse:
+    """Build an export for a target day in JSON or CSV form."""
+    report = _report_for(target, session)
+    if format == "json":
+        return ApiResponse[dict].ok(report.model_dump())
+
+    csv_buf = StringIO()
+    writer = DictWriter(
+        csv_buf,
+        fieldnames=[
+            "date_ist",
+            "trade_id",
+            "symbol",
+            "strategy",
+            "side",
+            "qty",
+            "entry_price",
+            "exit_price",
+            "status",
+            "pnl",
+            "opened_at",
+            "closed_at",
+        ],
+    )
+    writer.writeheader()
+    for t in report.trades:
+        writer.writerow(
+            {
+                "date_ist": report.date_ist,
+                "trade_id": t.id,
+                "symbol": t.symbol,
+                "strategy": t.strategy or "",
+                "side": t.side,
+                "qty": t.qty,
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price if t.exit_price is not None else "",
+                "status": t.status,
+                "pnl": t.pnl if t.pnl is not None else "",
+                "opened_at": t.opened_at.isoformat() if t.opened_at else "",
+                "closed_at": t.closed_at.isoformat() if t.closed_at else "",
+            }
+        )
+    return PlainTextResponse(csv_buf.getvalue(), media_type="text/csv")

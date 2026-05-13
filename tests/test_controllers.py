@@ -3,6 +3,7 @@
 These tests only assert delegation — business-logic behaviour is covered
 in the matching service test module.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -29,7 +30,9 @@ def test_validation_controller_delegates_to_service() -> None:
     svc = MagicMock()
     svc.validate.return_value = "validation"
     ctrl = ValidationController(service=svc)
-    out = ctrl.validate("sig", rag_context=["ctx"], regime="trend_up", corroborating_count=2)
+    out = ctrl.validate(
+        "sig", rag_context=["ctx"], regime="trend_up", corroborating_count=2
+    )
     assert out == "validation"
     svc.validate.assert_called_once_with(
         "sig", rag_context=["ctx"], regime="trend_up", corroborating_count=2
@@ -60,7 +63,18 @@ def test_execution_controller_requires_broker_or_service() -> None:
 
 def test_trade_controller_list_delegates_to_dal() -> None:
     dal = MagicMock()
-    dal.list_recent.return_value = [Trade(id=1, symbol="A", side="BUY", qty=1, entry_price=1.0, stop_loss=1.0, mode="paper", status="OPEN")]
+    dal.list_recent.return_value = [
+        Trade(
+            id=1,
+            symbol="A",
+            side="BUY",
+            qty=1,
+            entry_price=1.0,
+            stop_loss=1.0,
+            mode="paper",
+            status="OPEN",
+        )
+    ]
     ctrl = TradeController(dal=dal)
     rows = ctrl.list(limit=5)
     assert len(rows) == 1

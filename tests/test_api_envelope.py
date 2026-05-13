@@ -1,4 +1,5 @@
 """Envelope-shape regression tests for the new ``ApiResponse``-wrapped routes."""
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient

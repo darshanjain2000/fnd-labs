@@ -4,6 +4,7 @@ Sits between SignalService and RiskEngine: approves or rejects a signal by
 asking the LLM through ``LLMClient``. Falls back to a confidence-threshold
 rule whenever the LLM is disabled, the spend cap is hit, or the call fails.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

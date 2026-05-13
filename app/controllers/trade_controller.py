@@ -5,6 +5,7 @@ wraps :class:`TradeDAL` directly. The close path delegates to
 :class:`ExecutionController` because it must place broker orders and
 record PnL on the risk engine.
 """
+
 from __future__ import annotations
 
 from app.dal.trade_dal import TradeDAL

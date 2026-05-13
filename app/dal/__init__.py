@@ -5,6 +5,7 @@ DAL methods either return typed ORM rows or raise a ``DomainException`` from
 ``app.exceptions`` when a lookup fails — callers never see SQLAlchemy
 ``NoResultFound`` errors.
 """
+
 from __future__ import annotations
 
 from app.dal.audit_log_dal import AuditLogDAL

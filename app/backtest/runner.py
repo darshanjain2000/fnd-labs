@@ -16,13 +16,13 @@ Or from Python::
     result = run_backtest(df, strategies=[EMABreakout()], capital=25_000)
     print(result.summary())
 """
+
 from __future__ import annotations
 
 import argparse
 import math
 import time
 from collections import deque
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from types import MethodType
@@ -482,8 +482,14 @@ def run_backtest(
             # -- Check open trade for exit --
             if open_trade is not None:
                 record, open_trade = _simulate_trade(
-                    i, df, open_trade, trailing_atr_mult,
-                    slip_factor, brokerage_per_rt, symbol, strat.name,
+                    i,
+                    df,
+                    open_trade,
+                    trailing_atr_mult,
+                    slip_factor,
+                    brokerage_per_rt,
+                    symbol,
+                    strat.name,
                 )
                 if record is not None:
                     current_capital += record.pnl
@@ -509,9 +515,13 @@ def run_backtest(
 
                 entry = bar_close
                 entry_with_slip = (
-                    entry * (1 + slip_factor) if sig.side == "BUY" else entry * (1 - slip_factor)
+                    entry * (1 + slip_factor)
+                    if sig.side == "BUY"
+                    else entry * (1 - slip_factor)
                 )
-                qty = position_size(current_capital, risk_pct, entry_with_slip, sig.stop_loss, lot_size)
+                qty = position_size(
+                    current_capital, risk_pct, entry_with_slip, sig.stop_loss, lot_size
+                )
                 if qty >= 1:
                     open_trade = {
                         "side": sig.side,
@@ -525,7 +535,9 @@ def run_backtest(
 
         # Close any still-open position at EOD
         if open_trade is not None:
-            record = _close_eod(df, open_trade, slip_factor, brokerage_per_rt, symbol, strat.name)
+            record = _close_eod(
+                df, open_trade, slip_factor, brokerage_per_rt, symbol, strat.name
+            )
             current_capital += record.pnl
             trades.append(record)
 
@@ -595,8 +607,14 @@ def run_ensemble_backtest(
         # -- Check open trade for exit --
         if open_trade is not None:
             record, open_trade = _simulate_trade(
-                i, df, open_trade, trailing_atr_mult,
-                slip_factor, brokerage_per_rt, symbol, strategy_name,
+                i,
+                df,
+                open_trade,
+                trailing_atr_mult,
+                slip_factor,
+                brokerage_per_rt,
+                symbol,
+                strategy_name,
             )
             if record is not None:
                 current_capital += record.pnl
@@ -637,10 +655,16 @@ def run_ensemble_backtest(
             if best is not None and _passes_rr_gate(best, s):
                 entry = bar_close
                 entry_with_slip = (
-                    entry * (1 + slip_factor) if best.side == "BUY" else entry * (1 - slip_factor)
+                    entry * (1 + slip_factor)
+                    if best.side == "BUY"
+                    else entry * (1 - slip_factor)
                 )
                 qty = position_size(
-                    current_capital, risk_pct, entry_with_slip, best.stop_loss, lot_size,
+                    current_capital,
+                    risk_pct,
+                    entry_with_slip,
+                    best.stop_loss,
+                    lot_size,
                 )
                 if qty >= 1:
                     open_trade = {
@@ -656,7 +680,9 @@ def run_ensemble_backtest(
 
     # Close any still-open position at EOD
     if open_trade is not None:
-        record = _close_eod(df, open_trade, slip_factor, brokerage_per_rt, symbol, strategy_name)
+        record = _close_eod(
+            df, open_trade, slip_factor, brokerage_per_rt, symbol, strategy_name
+        )
         current_capital += record.pnl
         trades.append(record)
 
@@ -979,10 +1005,14 @@ def walk_forward(
     while window_start + test_bars <= n:
         # Prepend warm-up bars from the training window so indicators are valid
         warmup_start = max(0, window_start - _WARMUP_BARS)
-        eval_df = df.iloc[warmup_start: window_start + test_bars]
+        eval_df = df.iloc[warmup_start : window_start + test_bars]
         window_results = run_backtest(
-            eval_df, strategies, symbol=symbol,
-            capital=capital, lot_size=lot_size, risk_pct=risk_pct,
+            eval_df,
+            strategies,
+            symbol=symbol,
+            capital=capital,
+            lot_size=lot_size,
+            risk_pct=risk_pct,
             trailing_atr_mult=trailing_atr_mult,
             settings=settings,
         )
@@ -1008,8 +1038,12 @@ def walk_forward(
                 sharpe=sharpe,
                 sortino=sortino,
                 max_drawdown_pct=max_dd,
-                from_date=df.index[start].date() if isinstance(df.index, pd.DatetimeIndex) else None,
-                to_date=df.index[-1].date() if isinstance(df.index, pd.DatetimeIndex) else None,
+                from_date=df.index[start].date()
+                if isinstance(df.index, pd.DatetimeIndex)
+                else None,
+                to_date=df.index[-1].date()
+                if isinstance(df.index, pd.DatetimeIndex)
+                else None,
             )
         )
     return aggregated
@@ -1018,6 +1052,7 @@ def walk_forward(
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def _build_sample_df(n: int = 800) -> pd.DataFrame:
     """Build a synthetic OHLCV DataFrame for smoke-testing the CLI."""
@@ -1105,7 +1140,9 @@ def _fetch_real_data(
                 break
             except Exception as exc:
                 message = str(exc).lower()
-                is_empty_candle_response = "candle fetch failed" in message and "'data': []" in message
+                is_empty_candle_response = (
+                    "candle fetch failed" in message and "'data': []" in message
+                )
                 if is_empty_candle_response and chunks:
                     log.warning(
                         "backtest_fetch_empty_chunk_skipped",
@@ -1140,7 +1177,9 @@ def _fetch_real_data(
         cursor = chunk_end + timedelta(minutes=step_minutes)
 
     if not chunks:
-        raise RuntimeError(f"No candle data returned for {symbol} ({from_date} -> {to_date})")
+        raise RuntimeError(
+            f"No candle data returned for {symbol} ({from_date} -> {to_date})"
+        )
 
     raw = pd.concat(chunks, ignore_index=True)
     raw = raw.drop_duplicates(subset=["datetime"])
@@ -1162,21 +1201,32 @@ def _main() -> None:
     parser.add_argument("--lot-size", type=int, default=1)
     parser.add_argument("--walk-forward", action="store_true")
     parser.add_argument(
-        "--from", dest="from_date", default=None,
+        "--from",
+        dest="from_date",
+        default=None,
         help="Start date YYYY-MM-DD (uses Angel API). Omit for synthetic data.",
     )
     parser.add_argument(
-        "--to", dest="to_date", default=None,
+        "--to",
+        dest="to_date",
+        default=None,
         help="End date YYYY-MM-DD (uses Angel API). Omit for synthetic data.",
     )
-    parser.add_argument("--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m, 1d)")
-    parser.add_argument("--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)")
     parser.add_argument(
-        "--trailing-atr", type=float, default=0.0,
+        "--interval", default="5m", help="Candle interval (e.g. 1m, 5m, 15m, 1d)"
+    )
+    parser.add_argument(
+        "--exchange", default="NSE", help="Exchange segment (NSE, NFO, etc.)"
+    )
+    parser.add_argument(
+        "--trailing-atr",
+        type=float,
+        default=0.0,
         help="ATR trailing stop multiplier (e.g. 1.5). 0 = disabled.",
     )
     parser.add_argument(
-        "--params", default=None,
+        "--params",
+        default=None,
         help='JSON dict of strategy params, e.g. \'{"atr_mult": 1.2, "period": 7}\'',
     )
     args = parser.parse_args()
@@ -1184,7 +1234,11 @@ def _main() -> None:
     # Load data: real from Angel API or synthetic
     if args.from_date and args.to_date:
         df = _fetch_real_data(
-            args.symbol, args.exchange, args.interval, args.from_date, args.to_date,
+            args.symbol,
+            args.exchange,
+            args.interval,
+            args.from_date,
+            args.to_date,
         )
     else:
         df = _build_sample_df()
@@ -1193,12 +1247,15 @@ def _main() -> None:
     custom_params: dict = {}
     if args.params:
         import json as _json
+
         custom_params = _json.loads(args.params)
 
     strategies: list[Strategy] = (
         [cls(**custom_params) for cls in ALL_STRATEGIES]
         if args.strategy == "all"
-        else [cls(**custom_params) for cls in ALL_STRATEGIES if cls.name == args.strategy]
+        else [
+            cls(**custom_params) for cls in ALL_STRATEGIES if cls.name == args.strategy
+        ]
     )
     if not strategies:
         log.error(
@@ -1218,14 +1275,22 @@ def _main() -> None:
 
     if args.walk_forward:
         results = walk_forward(
-            df, strategies, symbol=args.symbol,
-            capital=args.capital, lot_size=args.lot_size, risk_pct=args.risk_pct,
+            df,
+            strategies,
+            symbol=args.symbol,
+            capital=args.capital,
+            lot_size=args.lot_size,
+            risk_pct=args.risk_pct,
             trailing_atr_mult=args.trailing_atr,
         )
     else:
         results = run_backtest(
-            df, strategies, symbol=args.symbol,
-            capital=args.capital, lot_size=args.lot_size, risk_pct=args.risk_pct,
+            df,
+            strategies,
+            symbol=args.symbol,
+            capital=args.capital,
+            lot_size=args.lot_size,
+            risk_pct=args.risk_pct,
             trailing_atr_mult=args.trailing_atr,
         )
 

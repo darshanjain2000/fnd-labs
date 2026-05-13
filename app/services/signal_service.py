@@ -4,6 +4,7 @@ Runs all enabled strategies for a symbol, applies the regime filter, and
 optionally enforces higher-timeframe EMA agreement. Pure business logic —
 no DB access, no broker calls.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -190,7 +191,9 @@ class SignalService:
 
         signals: list[Signal] = []
         for strat in self._strategies_for(symbol):
-            if self._settings.regime_filter_enabled and not strat.applies_to_regime(regime):
+            if self._settings.regime_filter_enabled and not strat.applies_to_regime(
+                regime
+            ):
                 log.debug(
                     "strategy_skipped_regime",
                     strategy=strat.name,
@@ -201,11 +204,15 @@ class SignalService:
             try:
                 sig = strat.evaluate(symbol, candles)
             except Exception as e:  # strategies must not raise — log and continue
-                log.warning("strategy_error", strategy=strat.name, symbol=symbol, error=str(e))
+                log.warning(
+                    "strategy_error", strategy=strat.name, symbol=symbol, error=str(e)
+                )
                 continue
             if sig is None:
                 continue
-            if self._settings.volume_filter_enabled and not _volume_ok(sig, candles, self._settings):
+            if self._settings.volume_filter_enabled and not _volume_ok(
+                sig, candles, self._settings
+            ):
                 log.debug(
                     "signal_rejected_low_volume",
                     symbol=symbol,
@@ -214,7 +221,9 @@ class SignalService:
                     min_volume_multiple=self._settings.min_volume_multiple,
                 )
                 continue
-            if self._settings.atr_filter_enabled and not _atr_ok(sig, candles, self._settings):
+            if self._settings.atr_filter_enabled and not _atr_ok(
+                sig, candles, self._settings
+            ):
                 log.debug(
                     "signal_rejected_low_atr",
                     symbol=symbol,
@@ -222,7 +231,9 @@ class SignalService:
                     side=sig.side,
                 )
                 continue
-            if self._settings.require_htf_agreement and not _htf_agrees(sig, htf_candles):
+            if self._settings.require_htf_agreement and not _htf_agrees(
+                sig, htf_candles
+            ):
                 log.debug(
                     "signal_rejected_htf",
                     symbol=symbol,

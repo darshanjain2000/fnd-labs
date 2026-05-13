@@ -3,6 +3,7 @@
 Heavy imports (`chromadb`, `sentence_transformers`) are deferred so the
 FastAPI app can boot even when these extras are not yet installed in dev.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -38,7 +39,9 @@ class RAGStore:
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         assert self._embedder is not None
-        return [v.tolist() for v in self._embedder.encode(texts, normalize_embeddings=True)]
+        return [
+            v.tolist() for v in self._embedder.encode(texts, normalize_embeddings=True)
+        ]
 
     def add_trade(self, trade_id: int, text: str, metadata: dict | None = None) -> None:
         if not self._lazy_init():

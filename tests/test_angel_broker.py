@@ -1,4 +1,5 @@
 """Unit tests for AngelBroker — uses a fake SmartConnect so no live creds needed."""
+
 from __future__ import annotations
 
 import pytest
@@ -16,7 +17,10 @@ class FakeSmart:
         self.cancelled: list[str] = []
 
     def searchScrip(self, exchange: str, searchtext: str):
-        return {"status": True, "data": [{"symboltoken": "99999", "tradingsymbol": searchtext}]}
+        return {
+            "status": True,
+            "data": [{"symboltoken": "99999", "tradingsymbol": searchtext}],
+        }
 
     def placeOrder(self, params: dict):
         self.placed.append(params)
@@ -55,7 +59,9 @@ def test_angel_requires_credentials(monkeypatch):
 
 def test_place_market_order_resolves_token_and_formats_params(angel):
     broker, fake = angel
-    result = broker.place_order(OrderRequest(symbol="NIFTY25APR22500CE", side="BUY", qty=50))
+    result = broker.place_order(
+        OrderRequest(symbol="NIFTY25APR22500CE", side="BUY", qty=50)
+    )
     assert result.order_id == "ANGEL-ORDER-1"
     assert result.status == "OPEN"
     assert len(fake.placed) == 1
@@ -71,7 +77,9 @@ def test_place_market_order_resolves_token_and_formats_params(angel):
 def test_place_sl_m_order_uses_stoploss_variety(angel):
     broker, fake = angel
     broker.place_order(
-        OrderRequest(symbol="X", side="SELL", qty=25, order_type="SL-M", trigger_price=100.5)
+        OrderRequest(
+            symbol="X", side="SELL", qty=25, order_type="SL-M", trigger_price=100.5
+        )
     )
     p = fake.placed[0]
     assert p["variety"] == "STOPLOSS"

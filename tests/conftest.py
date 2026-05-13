@@ -83,8 +83,14 @@ def make_settings() -> Callable[..., Settings]:
     def _make(**overrides: Any) -> Settings:
         base: dict[str, Any] = dict(
             mode="paper",
+            enabled_strategies="rsi_reversal,ema_breakout,vwap_pullback",
             min_strategy_agreement=1,
             min_signal_confidence=0.0,
+            volume_filter_enabled=False,
+            atr_filter_enabled=False,
+            regime_filter_enabled=False,
+            require_htf_agreement=False,
+            rr_gate_enabled=False,
         )
         base.update(overrides)
         return Settings(**base)

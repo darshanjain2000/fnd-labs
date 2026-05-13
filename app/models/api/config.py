@@ -1,4 +1,5 @@
 """Pydantic DTOs for the ``/config`` router."""
+
 from __future__ import annotations
 
 from typing import Any

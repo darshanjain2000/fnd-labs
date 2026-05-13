@@ -4,6 +4,7 @@ Phase 3 moved the execution, close, and mark-to-market logic into
 ``ExecutionService`` so the agent no longer owns DB writes directly.
 This module stays as a thin alias until Phase 5 deletes ``app/agents/``.
 """
+
 from __future__ import annotations
 
 from app.services.execution_service import ExecutionService

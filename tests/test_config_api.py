@@ -65,8 +65,24 @@ def test_validation_service_disabled_uses_fallback():
         json={"openrouter_enabled": False, "ai_fallback_approve_threshold": 0.6},
     )
     service = ValidationService()
-    hi = Signal(symbol="X", strategy="t", side="BUY", entry=100, stop_loss=98, target=104, confidence=0.9)
-    lo = Signal(symbol="X", strategy="t", side="BUY", entry=100, stop_loss=98, target=104, confidence=0.3)
+    hi = Signal(
+        symbol="X",
+        strategy="t",
+        side="BUY",
+        entry=100,
+        stop_loss=98,
+        target=104,
+        confidence=0.9,
+    )
+    lo = Signal(
+        symbol="X",
+        strategy="t",
+        side="BUY",
+        entry=100,
+        stop_loss=98,
+        target=104,
+        confidence=0.3,
+    )
     assert service.validate(hi).approved is True
     assert service.validate(lo).approved is False
 

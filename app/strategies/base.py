@@ -44,7 +44,12 @@ class Strategy(ABC):
     """
 
     name: str = "base"
-    preferred_regimes: tuple[Regime, ...] = ("trend_up", "trend_down", "range", "high_vol")
+    preferred_regimes: tuple[Regime, ...] = (
+        "trend_up",
+        "trend_down",
+        "range",
+        "high_vol",
+    )
 
     @abstractmethod
     def evaluate(self, symbol: str, candles: pd.DataFrame) -> Signal | None:

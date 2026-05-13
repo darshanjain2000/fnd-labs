@@ -1,4 +1,5 @@
 """Pydantic DTOs for the ``/report`` router."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel

@@ -1,4 +1,5 @@
 """Base class for all project-specific domain exceptions."""
+
 from __future__ import annotations
 
 from app.enums.exception_codes import CustomExceptionCodes

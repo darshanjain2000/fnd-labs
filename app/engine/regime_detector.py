@@ -1,4 +1,5 @@
 """Classify market regime: trend / range / high_vol."""
+
 from __future__ import annotations
 
 from typing import Literal

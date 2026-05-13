@@ -1,4 +1,5 @@
 """Audit-log list endpoint."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -13,5 +14,7 @@ router = APIRouter(prefix="/logs", tags=["logs"])
 def list_audit(limit: int = 50) -> ApiResponse[AuditLogListOut]:
     """List the most recent audit-log events, newest first."""
     rows = AuditLogDAL().list_recent(limit=limit)
-    payload = AuditLogListOut(count=len(rows), logs=[AuditLogOut.from_row(r) for r in rows])
+    payload = AuditLogListOut(
+        count=len(rows), logs=[AuditLogOut.from_row(r) for r in rows]
+    )
     return ApiResponse[AuditLogListOut].ok(payload)
